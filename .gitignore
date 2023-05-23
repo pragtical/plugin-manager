@@ -1,10 +1,10 @@
-lpm
+ppm
 lua.exe
-lpm-*
+ppm-*
 *.o
-lpm.lua.c
+ppm.lua.c
 lib/prefix
-src/lpm.luac.c
-src/lpm.luac
+src/ppm.luac.c
+src/ppm.luac
 lib/mbedtls-2.27.0/build
 lib/mbedtls-2.27.0/tests

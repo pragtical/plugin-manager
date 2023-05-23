@@ -4,14 +4,14 @@
 : ${HOSTCC=$CC}
 : ${AR=ar}
 : ${MAKE=make}
-: ${BIN=lpm}
+: ${BIN=ppm}
 : ${JOBS=4}
 
 SRCS="src/*.c"
 COMPILE_FLAGS="$CFLAGS -Ilib/prefix/include" # We specifically rename this and LDFLAGS, because exotic build environments export these to subprcoesses.
 LINK_FLAGS="$LDFLAGS -lm -Llib/prefix/lib -Llib/prefix/lib64"   # And ideally we don't want to mess with the underlying build processes, unless we're explicit about it.
 
-[[ "$@" == "clean" ]] && rm -rf lib/libgit2/build lib/zlib/build lib/libzip/build lib/mbedtls/build lib/prefix lua $BIN *.exe src/lpm.luac src/lpm.lua.c && exit 0
+[[ "$@" == "clean" ]] && rm -rf lib/libgit2/build lib/zlib/build lib/libzip/build lib/mbedtls/build lib/prefix lua $BIN *.exe src/ppm.luac src/ppm.lua.c && exit 0
 cmake --version >/dev/null 2>/dev/null || { echo "Please ensure that you have cmake installed." && exit -1; }
 
 # Build supporting libraries, libz, libmbedtls, libmbedcrypto, libgit2, libzip, libmicrotar, liblua
@@ -39,9 +39,9 @@ fi
 [[ "$@" != *"-llua"* ]] && COMPILE_FLAGS="$COMPILE_FLAGS -Ilib/lua -DMAKE_LIB=1" && SRCS="$SRCS lib/lua/onelua.c"
 
 # Build the pre-packaged lua file into the executbale.
-if [[ "$@" == *"-DLPM_STATIC"* ]]; then
+if [[ "$@" == *"-DPPM_STATIC"* ]]; then
   [[ ! -e "lua.exe" ]] && { $HOSTCC -Ilib/lua -o lua.exe lib/lua/onelua.c -lm || exit -1; }
-  ./lua.exe -e 'io.open("src/lpm.lua.c", "wb"):write("unsigned char lpm_luac[] = \""..string.dump(load(io.lines("src/lpm.lua","L"), "=lpm.lua")):gsub(".",function(c) return string.format("\\x%02X",string.byte(c)) end).."\";unsigned int lpm_luac_len = sizeof(lpm_luac)-1;")'
+  ./lua.exe -e 'io.open("src/ppm.lua.c", "wb"):write("unsigned char ppm_luac[] = \""..string.dump(load(io.lines("src/ppm.lua","L"), "=ppm.lua")):gsub(".",function(c) return string.format("\\x%02X",string.byte(c)) end).."\";unsigned int ppm_luac_len = sizeof(ppm_luac)-1;")'
 fi
 
 [[ $OSTYPE != 'msys'* && $CC != *'mingw'* && $CC != "emcc" ]] && COMPILE_FLAGS="$COMPILE_FLAGS -DLUA_USE_LINUX" && LINK_FLAGS="$LINK_FLAGS -ldl"
