@@ -556,16 +556,16 @@ function common.args(arguments, options)
 end
 
 global({
-  LATEST_MOD_VERSION = "3.0.0",
+  LATEST_MOD_VERSION = "3.5.0",
   EXECUTABLE_EXTENSION = PLATFORM == "windows" and ".exe" or "",
   SHOULD_COLOR = ((PLATFORM == "windows" or (os.getenv("TERM") and os.getenv("TERM") ~= "dumb")) and not os.getenv("NO_COLOR")) or false
 })
-global({ 
+global({
   "HOME", "USERDIR", "CACHEDIR", "CONFIGDIR", "BOTTLEDIR", "JSON", "TABLE", "HEADER", "RAW", "VERBOSE", "FILTRATION", "UPDATE", "MOD_VERSION", "QUIET", "FORCE", "REINSTALL", "CONFIG",
   "NO_COLOR", "AUTO_PULL_REMOTES", "ARCH", "ASSUME_YES", "NO_INSTALL_OPTIONAL", "TMPDIR", "DATADIR", "BINARY", "POST", "PROGRESS", "SYMLINK", "REPOSITORY", "EPHEMERAL",
-  "MASK", "settings", "repositories", "lite_xls", "system_bottle", "primary_lite_xl", "progress_bar_label", "write_progress_bar" 
+  "MASK", "settings", "repositories", "pragticals", "system_bottle", "primary_pragtical", "progress_bar_label", "write_progress_bar"
 })
-global({ Addon = {}, Repository = {}, LiteXL = {}, Bottle = {}, lpm = {}, log = {} })
+global({ Addon = {}, Repository = {}, Pragtical = {}, Bottle = {}, ppm = {}, log = {} })
 
 -- in the cases where we don't have a manifest, assume generalized structure, take addons folder, trawl through it, build manifest that way
 -- assuming each .lua file under the `addons` folder is a addon. also parse the README, if present, and see if any of the addons
@@ -718,19 +718,19 @@ local function match_version(version, pattern)
   return version == pattern
 end
 
-local function compatible_modversion(lite_xl_modversion, addon_modversion)
-  local result = compare_version(lite_xl_modversion, addon_modversion)
+local function compatible_modversion(pragtical_modversion, addon_modversion)
+  local result = compare_version(pragtical_modversion, addon_modversion)
   return result >= 0 and result < 3
 end
 
 
--- There can exist many different versions of an addon. All statuses are relative to a particular lite bottle.
+-- There can exist many different versions of an addon. All statuses are relative to a particular pragtical bottle.
 -- available: Addon is available in a repository, and can be installed. There is no comparable version on the system.
 -- upgradable: Addon is installed, but does not match the highest version in any repository.
 -- orphan: Addon is installed, but there is no corresponding addon in any repository.
 -- installed: Addon is installed, and matches the highest version in any repository, or highest version is incompatible.
--- core: Addon is a part of the lite data directory, and doesn't have corresponding addons in any repository.
--- bundled: Addon is part of the lite data directory, but has corresponding addons in any repository.
+-- core: Addon is a part of the pragtical data directory, and doesn't have corresponding addons in any repository.
+-- bundled: Addon is part of the pragtical data directory, but has corresponding addons in any repository.
 -- incompatible: Addon is not installed and conflicts with existing installed addons.
 function Addon.__index(self, idx) return rawget(self, idx) or Addon[idx] end
 function Addon.new(repository, metadata)
@@ -805,7 +805,7 @@ end
 
 function Addon:get_install_path(bottle)
   local folder = self.type == "library" and "libraries" or (self.type .. "s")
-  local path = (((self:is_core(bottle) or self:is_bundled()) and bottle.lite_xl.datadir_path) or (bottle.local_path and (bottle.local_path .. PATHSEP .. "user") or USERDIR)) .. PATHSEP .. folder
+  local path = (((self:is_core(bottle) or self:is_bundled()) and bottle.pragtical.datadir_path) or (bottle.local_path and (bottle.local_path .. PATHSEP .. "user") or USERDIR)) .. PATHSEP .. folder
   if self:is_asset() and self.organization == "singleton" then
     if (self.path or self.url) and common.basename(self.path or self.url):gsub("%.%w+$", "") ~= self.id then
       log.warning(string.format("Mistmatch between asset url/path filename and id; (%s vs. %s)", self.path or self.url, self.id))
@@ -862,12 +862,12 @@ end
 
 function Addon:get_compatibilities(bottle)
   local dependency_list = common.canonical_order(self.dependencies)
-  if #dependency_list == 0 then return {}, {} end 
+  if #dependency_list == 0 then return {}, {} end
   local compatible_addons, incompatible_addons = {}, {}
   local installed_addons = bottle:installed_addons()
   for _, addon in ipairs(dependency_list) do
     local v = self.dependencies[addon]
-    local potential_addons = { bottle:get_addon(addon, v.version, MOD_VERSION ~= "any" and { mod_version = bottle.lite_xl.mod_version }) }
+    local potential_addons = { bottle:get_addon(addon, v.version, MOD_VERSION ~= "any" and { mod_version = bottle.pragtical.mod_version }) }
     for i, potential_addon in ipairs(potential_addons) do
       local incomaptibilities = common.grep(installed_addons, function(p) return p:is_incompatible(potential_addon) end)
       if #incomaptibilities == 0 then
@@ -897,7 +897,7 @@ function Addon:install(bottle, installing)
   local install_path = self:get_install_path(bottle)
   if install_path:find(USERDIR, 1, true) ~= 1 and install_path:find(TMPDIR, 1, true) ~= 1 then error("invalid install path: " .. install_path) end
   local temporary_install_path = TMPDIR .. PATHSEP .. install_path:sub(((install_path:find(TMPDIR, 1, true) == 1) and #TMPDIR or #USERDIR) + 2)
-  
+
   local status, err = pcall(function()
     installing = installing or {}
     installing[self.id] = true
@@ -1052,7 +1052,7 @@ end
 
 function Addon:get_orphaned_dependencies(bottle, uninstalling)
   local t = {}
-  uninstalling = uninstalling or { [self.id] = true } 
+  uninstalling = uninstalling or { [self.id] = true }
   local installed_addons = system_bottle:installed_addons()
   for i, id in ipairs(common.canonical_order(self.dependencies)) do
     local options = self.dependencies[id]
@@ -1121,7 +1121,7 @@ function Repository.new(hash)
     live = nil,
     addons = nil,
     repo_path = hash.repo_path or (CACHEDIR .. PATHSEP .. "repos" .. PATHSEP .. system.hash(hash.remote)),
-    lite_xls = {},
+    pragticals = {},
     last_retrieval = nil
   }, Repository)
   if not self:is_local() then
@@ -1187,8 +1187,8 @@ function Repository:parse_manifest(repo_id)
       for i, metadata in ipairs(self.manifest["addons"] or self.manifest["plugins"] or {}) do
         table.insert(self.addons, Addon.new(self, metadata))
       end
-      for i, metadata in ipairs(self.manifest["lite-xls"] or {}) do
-        table.insert(self.lite_xls, LiteXL.new(self, metadata))
+      for i, metadata in ipairs(self.manifest["pragticals"] or {}) do
+        table.insert(self.pragticals, Pragtical.new(self, metadata))
       end
       self.remotes = common.map(self.manifest["remotes"] or {}, function(r) return Repository.url(r) end)
     end)
@@ -1401,89 +1401,89 @@ function Repository:remove()
 end
 
 
-function LiteXL.__index(t, k) return LiteXL[k] end
-function LiteXL.new(repository, metadata)
-  if not metadata.version then error("lite-xl entry requires a version") end
+function Pragtical.__index(t, k) return Pragtical[k] end
+function Pragtical.new(repository, metadata)
+  if not metadata.version then error("pragtical entry requires a version") end
   local self = setmetatable(common.merge({
     repository = repository,
     tags = {},
     files = {}
-  }, metadata), LiteXL)
+  }, metadata), Pragtical)
   self.hash = system.hash((repository and repository:url() or "") .. "-" .. metadata.version .. common.join("", common.map(self.files, function(f) return f.checksum end)))
-  self.local_path = self:is_local() and self.path or (CACHEDIR .. PATHSEP .. "lite_xls" .. PATHSEP .. self.version .. PATHSEP .. self.hash)
+  self.local_path = self:is_local() and self.path or (CACHEDIR .. PATHSEP .. "pragticals" .. PATHSEP .. self.version .. PATHSEP .. self.hash)
   self.binary_path = self.binary_path or { }
   self.datadir_path = self.datadir_path or (self.local_path .. PATHSEP .. "data")
   return self
 end
 
-function LiteXL:get_binary_path(arch)
+function Pragtical:get_binary_path(arch)
   if self.binary_path and self.binary_path[arch or DEFAULT_ARCH] then return self.binary_path[arch or DEFAULT_ARCH] end
-  return self.local_path .. PATHSEP .. "lite-xl" .. EXECUTABLE_EXTENSION
+  return self.local_path .. PATHSEP .. "pragtical" .. EXECUTABLE_EXTENSION
 end
 
-function LiteXL:is_system() return system_bottle and system_bottle.lite_xl == self end
-function LiteXL:is_primary() return primary_lite_xl == self end
-function LiteXL:is_local() return not self.repository and self.path end
-function LiteXL:is_manifest() return self.repository end
-function LiteXL:is_compatible(addon) return not addon.mod_version or MOD_VERSION == "any" or compatible_modversion(self.mod_version, addon.mod_version) end
-function LiteXL:is_installed() return system.stat(self.local_path) ~= nil end
+function Pragtical:is_system() return system_bottle and system_bottle.pragtical == self end
+function Pragtical:is_primary() return primary_pragtical == self end
+function Pragtical:is_local() return not self.repository and self.path end
+function Pragtical:is_manifest() return self.repository end
+function Pragtical:is_compatible(addon) return not addon.mod_version or MOD_VERSION == "any" or compatible_modversion(self.mod_version, addon.mod_version) end
+function Pragtical:is_installed() return system.stat(self.local_path) ~= nil end
 
-function LiteXL:install()
-  if self:is_installed() then log.warning("lite-xl " .. self.version .. " already installed") return end
+function Pragtical:install()
+  if self:is_installed() then log.warning("pragtical " .. self.version .. " already installed") return end
   local local_path = self.local_path
-  self.local_path = TMPDIR .. PATHSEP .. "lite-xls" .. PATHSEP .. self.version
+  self.local_path = TMPDIR .. PATHSEP .. "pragticals" .. PATHSEP .. self.version
   common.rmrf(self.local_path)
   common.mkdirp(self.local_path)
-  if system_bottle.lite_xl == self then -- system lite-xl. We have to copy it because we can't really set the user directory.
-    local executable, datadir = common.path("lite-xl" .. EXECUTABLE_EXTENSION)
-    if not executable then error("can't find system lite-xl executable") end
+  if system_bottle.pragtical == self then -- system pragtical. We have to copy it because we can't really set the user directory.
+    local executable, datadir = common.path("pragtical" .. EXECUTABLE_EXTENSION)
+    if not executable then error("can't find system pragtical executable") end
     local stat = system.stat(executable)
     executable = stat.symlink and stat.symlink or executable
     datadir = common.dirname(executable) .. PATHSEP .. "data"
-    if not system.stat(datadir) then error("can't find system lite-xl data dir") end
-    common.copy(executable, self.local_path .. PATHSEP .. "lite-xl")
-    system.chmod(self.local_path .. PATHSEP .. "lite-xl", 448) -- chmod to rwx-------
+    if not system.stat(datadir) then error("can't find system pragtical data dir") end
+    common.copy(executable, self.local_path .. PATHSEP .. "pragtical")
+    system.chmod(self.local_path .. PATHSEP .. "pragtical", 448) -- chmod to rwx-------
     common.copy(datadir, self.local_path .. PATHSEP .. "data")
   elseif self.path and not self.repository then -- local repository
-    common.symlink(self:get_binary_path(), self.local_path .. PATHSEP .. "lite_xl")
+    common.symlink(self:get_binary_path(), self.local_path .. PATHSEP .. "pragtical")
   else
     if self.remote then
       system.init(self.local_path, self.remote)
       common.reset(self.local_path, self.commit or self.branch)
     end
-    for i,file in ipairs(self.files or {}) do 
+    for i,file in ipairs(self.files or {}) do
       local file_arch = file.arch and (type(file.arch) == 'table' and file.arch or { file.arch })
       if file_arch and common.grep(ARCH, function(e) return common.grep(file_arch, function(a) return a == e end)[1] end)[1] then
         if not file.checksum then error("requires a checksum") end
         local basename = common.basename(file.url)
-        local archive = assert(basename:find("%.zip$") or basename:find("%.tar%.gz$"), "lite-xl files must be archives")
-        local path = self.local_path .. PATHSEP .. (archive and basename or "lite-xl")
+        local archive = assert(basename:find("%.zip$") or basename:find("%.tar%.gz$"), "pragtical files must be archives")
+        local path = self.local_path .. PATHSEP .. (archive and basename or "pragtical")
         log.action("Downloading file " .. file.url .. "...")
         common.get(file.url, { target = path, checksum = file.checksum, callback = write_progress_bar })
         log.action("Downloaded file " .. file.url .. " to " .. path)
         if archive then
           log.action("Extracting file " .. basename .. " in " .. self.local_path)
           system.extract(path, self.local_path)
-          -- because this is a lite-xl archive binary, we should expect to find a `lite-xl` folder, containing the lite-xl binary, and a data directory
+          -- because this is a pragtical archive binary, we should expect to find a `pragtical` folder, containing the pragtical binary, and a data directory
           -- we want to move these into the primary directory, then delete the archive and the directory
-          common.rename(self.local_path .. PATHSEP .. "lite-xl", self.local_path .. PATHSEP .. "dir")
+          common.rename(self.local_path .. PATHSEP .. "pragtical", self.local_path .. PATHSEP .. "dir")
           common.rename(self.local_path .. PATHSEP .. "dir" .. PATHSEP .. "data", self.local_path .. PATHSEP .. "data")
-          common.rename(self.local_path .. PATHSEP .. "dir" .. PATHSEP .. "lite-xl" .. EXECUTABLE_EXTENSION, self.local_path .. PATHSEP .. "lite-xl" .. EXECUTABLE_EXTENSION)
+          common.rename(self.local_path .. PATHSEP .. "dir" .. PATHSEP .. "pragtical" .. EXECUTABLE_EXTENSION, self.local_path .. PATHSEP .. "pragtical" .. EXECUTABLE_EXTENSION)
           common.rmrf(self.local_path .. PATHSEP .. "dir")
           common.rmrf(path)
         end
       end
     end
   end
-  if not system.stat(self.local_path .. PATHSEP .. "lite-xl" .. EXECUTABLE_EXTENSION) then error("can't find executable for lite-xl " .. self.version .. "; does this release exist for " .. common.join(" & ", ARCH) .. "?") end
+  if not system.stat(self.local_path .. PATHSEP .. "pragtical" .. EXECUTABLE_EXTENSION) then error("can't find executable for pragtical " .. self.version .. "; does this release exist for " .. common.join(" & ", ARCH) .. "?") end
   common.rename(self.local_path, local_path)
   self.local_path = local_path
 end
 
-function LiteXL:uninstall()
-  if not system.stat(self.local_path) then error("lite-xl " .. self.version .. " not installed") end
-  if prompt("This will delete " .. self.local_path .. ". Are you sure you want to continue?") then 
-    common.rmrf(self.local_path) 
+function Pragtical:uninstall()
+  if not system.stat(self.local_path) then error("pragtical " .. self.version .. " not installed") end
+  if prompt("This will delete " .. self.local_path .. ". Are you sure you want to continue?") then
+    common.rmrf(self.local_path)
   end
 end
 
@@ -1492,15 +1492,15 @@ function Bottle.__index(t, k) return Bottle[k] end
 function Bottle.new(metadata)
   local self = setmetatable({
     name = metadata.name,
-    lite_xl = metadata.lite_xl,
+    pragtical = metadata.pragtical,
     addons = metadata.addons,
     config = metadata.config,
     is_system = metadata.is_system
   }, Bottle)
   if not metadata.is_system then
     if self.addons then table.sort(self.addons, function(a, b) return (a.id .. ":" .. a.version) < (b.id .. ":" .. b.version) end) end
-    self.hash = system.hash(self.name or (((self.lite_xl and self.lite_xl.version or "")) .. " " .. common.join(" ", common.map(self.addons, function(p) 
-      return (p.repository and p.repository:url() or "") .. ":" .. p.id .. ":" .. p.version 
+    self.hash = system.hash(self.name or (((self.pragtical and self.pragtical.version or "")) .. " " .. common.join(" ", common.map(self.addons, function(p)
+      return (p.repository and p.repository:url() or "") .. ":" .. p.id .. ":" .. p.version
     end)) .. (metadata.config or "") .. (EPHEMERAL and "E" or "")))
     if self.name then
       self.local_path = BOTTLEDIR .. PATHSEP .. "named" .. PATHSEP .. self.name
@@ -1513,14 +1513,14 @@ function Bottle.new(metadata)
       self.local_path = BOTTLEDIR .. PATHSEP .. "auto" .. PATHSEP .. self.hash
     end
   end
-  if self.name and self:is_constructed() then -- if we exist, and we have a name, find out what lxl version we are
-    local path = self.local_path .. PATHSEP .. "lite-xl" .. EXECUTABLE_EXTENSION
+  if self.name and self:is_constructed() then -- if we exist, and we have a name, find out what pragtical version we are
+    local path = self.local_path .. PATHSEP .. "pragtical" .. EXECUTABLE_EXTENSION
     local s = system.stat(path)
     if s and s.symlink then
-      self.lite_xl = s and common.first(lite_xls, function(l) return l:get_binary_path() == s.symlink end)
+      self.pragtical = s and common.first(pragticals, function(l) return l:get_binary_path() == s.symlink end)
     elseif s then
       local hash = system.hash(path, "file")
-      self.lite_xl = common.first(lite_xls, function(l) return system.hash(l:get_binary_path(), "file") == hash end)
+      self.pragtical = common.first(pragticals, function(l) return system.hash(l:get_binary_path(), "file") == hash end)
     end
   end
   return self
@@ -1544,25 +1544,25 @@ function Bottle:construct()
   self.local_path = TMPDIR .. PATHSEP .. "bottles" .. PATHSEP .. (self.name or self.hash)
   common.rmrf(self.local_path)
 
-  if self.lite_xl and not self.lite_xl:is_installed() then self.lite_xl:install() end
+  if self.pragtical and not self.pragtical:is_installed() then self.pragtical:install() end
   common.mkdirp(self.local_path .. PATHSEP .. "user")
   common.write(self.local_path .. PATHSEP .. "user" .. PATHSEP .. "init.lua", DEFAULT_CONFIG_HEADER .. (MOD_VERSION == "any" and "config.skip_plugins_version = true\n" or "") .. (self.config or ""))
 
 
   local hardcopy = SYMLINK == false
-  local lite_xl = self.lite_xl
-  if SYMLINK ~= false and common.exists((lite_xl or primary_lite_xl).local_path .. PATHSEP .. "user") then
-    log.warning("your " .. (lite_xl and "specified" or "primary") .. " lite-xl has a user folder next to it. creating a hard copy of lite-xl for this bottle")
-    lite_xl = lite_xl or primary_lite_xl
+  local pragtical = self.pragtical
+  if SYMLINK ~= false and common.exists((pragtical or primary_pragtical).local_path .. PATHSEP .. "user") then
+    log.warning("your " .. (pragtical and "specified" or "primary") .. " pragtical has a user folder next to it. creating a hard copy of pragtical for this bottle")
+    pragtical = pragtical or primary_pragtical
     hardcopy = true
   end
   local construct = hardcopy and common.copy or common.symlink
-  if lite_xl then -- if no lite_xl, we're assuming that we're using the system version with a LITE_PREFIX environment variable. 
-    construct(lite_xl:get_binary_path(), self.local_path .. PATHSEP .. "lite-xl" .. EXECUTABLE_EXTENSION)
+  if pragtical then -- if no pragtical, we're assuming that we're using the system version with a PRAGTICAL_PREFIX environment variable.
+    construct(pragtical:get_binary_path(), self.local_path .. PATHSEP .. "pragtical" .. EXECUTABLE_EXTENSION)
     if hardcopy then
-      system.chmod(self.local_path .. PATHSEP .. "lite-xl" .. EXECUTABLE_EXTENSION, 448) -- chmod to rwx-------\
+      system.chmod(self.local_path .. PATHSEP .. "pragtical" .. EXECUTABLE_EXTENSION, 448) -- chmod to rwx-------\
     end
-    construct(lite_xl.datadir_path, self.local_path .. PATHSEP .. "data")
+    construct(pragtical.datadir_path, self.local_path .. PATHSEP .. "data")
   end
   local installing = {}
   for i,addon in ipairs(self.addons) do
@@ -1618,7 +1618,7 @@ end
 
 function Bottle:run(args)
   args = args or {}
-  local path = common.exists(self.local_path .. PATHSEP .. "lite-xl" .. EXECUTABLE_EXTENSION) or (self.lite_xl or primary_lite_xl):get_binary_path()
+  local path = common.exists(self.local_path .. PATHSEP .. "pragtical" .. EXECUTABLE_EXTENSION) or (self.pragtical or primary_pragtical):get_binary_path()
   if not system.stat(path) then error("cannot find bottle executable " .. path) end
   if PLATFORM == "windows" and path:find(" ") then path = '"' .. path:gsub('"+', function(s) return s..s end) .. '"' end
   local line = path .. (#args > 0 and " " or "") .. table.concat(common.map(args, function(arg)
@@ -1628,8 +1628,8 @@ function Bottle:run(args)
     end
     return "'" .. arg:gsub("'", "'\"'\"'"):gsub("\\", "\\\\") .. "'"
   end), " ")
-  if VERBOSE then log.action("Setting LITE_USERDIR to " .. self.local_path .. PATHSEP .. "user") end
-  system.setenv("LITE_USERDIR", self.local_path .. PATHSEP .. "user")
+  if VERBOSE then log.action("Setting PRAGTICAL_USERDIR to " .. self.local_path .. PATHSEP .. "user") end
+  system.setenv("PRAGTICAL_USERDIR", self.local_path .. PATHSEP .. "user")
   if VERBOSE then log.action("Running " .. line) end
   return os.execute(line)
 end
@@ -1678,7 +1678,7 @@ function Bottle:all_addons()
   for _, addon_type in ipairs({ "plugins", "libraries", "fonts", "colors" }) do
     local addon_paths = {
       (self.local_path and (self.local_path .. PATHSEP .. "user") or USERDIR) .. PATHSEP .. addon_type,
-      self.lite_xl.datadir_path .. PATHSEP .. addon_type
+      self.pragtical.datadir_path .. PATHSEP .. addon_type
     }
     for i, addon_path in ipairs(addon_paths) do
       if system.stat(addon_path) then
@@ -1704,11 +1704,13 @@ function Bottle:all_addons()
               location = (i == 2 and (hash[id] and "bundled" or "core")) or "user",
               organization = (v:find("%.lua$") and "singleton" or "complex"),
               local_path = path,
-              mod_version = self.lite_xl.mod_version,
+              mod_version = self.pragtical.mod_version,
               path = addon_type .. PATHSEP .. v,
-              description = (hash[id] and hash[id][1].description or nil),
-              repo_path = (hash[id] and hash[id][1].local_path or nil),
-              dependencies = (hash[id] and hash[id][1].dependencies or nil)
+              -- temporary fix upstream bug directly on our ppm fork
+              -- which consists on checking if hash[id][1] is set
+              description = ((hash[id] and hash[id][1]) and hash[id][1].description or nil),
+              repo_path = ((hash[id] and hash[id][1]) and hash[id][1].local_path or nil),
+              dependencies = ((hash[id] and hash[id][1]) and hash[id][1].dependencies or nil)
             }))
             if not hash[id] then hash[id] = { t[#t] } end
           end
@@ -1725,7 +1727,7 @@ function Bottle:all_addons()
         location = "core",
         organization = "singleton",
         local_path = nil,
-        mod_version = self.lite_xl.mod_version,
+        mod_version = self.pragtical.mod_version,
         path = "plugins" .. PATHSEP .. id .. ".lua"
       }))
     end
@@ -1753,8 +1755,8 @@ local function filter_match(field, filter)
       local actual_filter = inverted and v:sub(2) or v
       for k, field in ipairs(fields) do
         local matches = field:find("^" .. actual_filter .. "$")
-        if (not inverted and matches) or (inverted and not matches) then 
-          match_count = match_count + 1 
+        if (not inverted and matches) or (inverted and not matches) then
+          match_count = match_count + 1
           break
         end
       end
@@ -1810,39 +1812,39 @@ local function get_repository(url)
   if not url then error("requires a repository url") end
   local r = Repository.url(url)
   for i,v in ipairs(repositories) do
-    if ((v.repo_path and v.repo_path == r.repo_path) or (v.remote and v.remote == r.remote)) and v.branch == r.branch and v.commit == r.commit then 
+    if ((v.repo_path and v.repo_path == r.repo_path) or (v.remote and v.remote == r.remote)) and v.branch == r.branch and v.commit == r.commit then
       return i, v
     end
   end
   return nil
 end
 
-function lpm.settings_save()
+function ppm.settings_save()
   common.write(CONFIGDIR .. PATHSEP .. "settings.json", json.encode(settings))
 end
 
 
-function lpm.repo_save()
+function ppm.repo_save()
   settings.repositories = common.map(repositories, function(r) return r:url() end)
-  lpm.settings_save()
+  ppm.settings_save()
 end
 
 
 local DEFAULT_REPOS
-function lpm.repo_init(repos)
+function ppm.repo_init(repos)
   DEFAULT_REPOS = { Repository.url(DEFAULT_REPO_URL) }
   if not system.stat(CONFIGDIR .. PATHSEP .. "settings.json") then
     for i, repository in ipairs(repos or DEFAULT_REPOS) do
       table.insert(repositories, repository:add(true))
     end
-    lpm.repo_save()
+    ppm.repo_save()
   end
 end
 
 
 
 
-function lpm.repo_add(...)
+function ppm.repo_add(...)
   for i, url in ipairs({ ... }) do
     local idx, repo = get_repository(url)
     if repo then -- if we're alreayd a repo, put this at the head of the resolution list
@@ -1853,22 +1855,22 @@ function lpm.repo_add(...)
     table.insert(repositories, 1, repo)
     repo:update()
   end
-  lpm.repo_save()
+  ppm.repo_save()
 end
 
 
-function lpm.repo_rm(...)
+function ppm.repo_rm(...)
   for i, url in ipairs({ ... }) do
     local idx, repo = get_repository(url)
     if not repo then error("cannot find repository " .. url) end
     table.remove(repositories, idx)
     repo:remove()
   end
-  lpm.repo_save()
+  ppm.repo_save()
 end
 
 
-function lpm.repo_update(...)
+function ppm.repo_update(...)
   local t = { ... }
   if #t == 0 then table.insert(t, false) end
   for i, url in ipairs(t) do
@@ -1881,94 +1883,94 @@ function lpm.repo_update(...)
   end
 end
 
-function lpm.get_lite_xl(version)
-  if version == "primary" then return primary_lite_xl end
-  return common.first(common.concat(lite_xls, common.flat_map(repositories, function(e) return e.lite_xls end)), function(lite_xl) return lite_xl.version == version end)
+function ppm.get_pragtical(version)
+  if version == "primary" then return primary_pragtical end
+  return common.first(common.concat(pragticals, common.flat_map(repositories, function(e) return e.pragticals end)), function(pragtical) return pragtical.version == version end)
 end
 
-function lpm.lite_xl_save()
-  settings.lite_xls = common.map(common.grep(lite_xls, function(l) return (l:is_local() or not l:is_manifest()) and not l:is_system() end), function(l) 
-    return { version = l.version, mod_version = l.mod_version, path = l.path, binary_path = l.binary_path, datadir_path = l.datadir_path, primary = primary_lite_xl == l, files = l.files } 
+function ppm.pragtical_save()
+  settings.pragticals = common.map(common.grep(pragticals, function(l) return (l:is_local() or not l:is_manifest()) and not l:is_system() end), function(l)
+    return { version = l.version, mod_version = l.mod_version, path = l.path, binary_path = l.binary_path, datadir_path = l.datadir_path, primary = primary_pragtical == l, files = l.files }
   end)
-  lpm.settings_save()
+  ppm.settings_save()
 end
 
-function lpm.lite_xl_add(version, path)
+function ppm.pragtical_add(version, path)
   if not version then error("requires a version") end
   if not version:find("^%d") then error("versions must begin numerically (i.e. 2.1.1-debug)") end
-  if common.first(lite_xls, function(lite_xl) return lite_xl.version == version end) then error(version .. " lite-xl already exists") end
+  if common.first(pragticals, function(pragtical) return pragtical.version == version end) then error(version .. " pragtical already exists") end
   if path:find("^http") then
-    table.insert(lite_xls, LiteXL.new(nil, { version = version, mod_version = MOD_VERSION or LATEST_MOD_VERSION, files = { { arch = ARCH, url = path, checksum = "SKIP" } } }))
+    table.insert(pragticals, Pragtical.new(nil, { version = version, mod_version = MOD_VERSION or LATEST_MOD_VERSION, files = { { arch = ARCH, url = path, checksum = "SKIP" } } }))
   else
-    local binary_path  = BINARY or (path and(path .. PATHSEP .. "lite-xl" .. EXECUTABLE_EXTENSION))
+    local binary_path  = BINARY or (path and(path .. PATHSEP .. "pragtical" .. EXECUTABLE_EXTENSION))
     local data_path = DATADIR or (path and (path .. PATHSEP .. "data"))
     local binary_stat = assert(system.stat(binary_path), "can't find binary path " .. binary_path)
     local data_stat = assert(system.stat(data_path), "can't find data path " .. data_path)
-    local path_stat = assert(system.stat(path:gsub(PATHSEP .. "$", "")), "can't find lite-xl path " .. path)
+    local path_stat = assert(system.stat(path:gsub(PATHSEP .. "$", "")), "can't find pragtical path " .. path)
     local mod_version = MOD_VERSION
     if mod_version == "any" or not mod_version then
       mod_version = common.read(data_path .. PATHSEP .. "core" .. PATHSEP .. "start.lua"):match("MOD_VERSION_MAJOR%s=%s(%d+)")
     end
-    table.insert(lite_xls, LiteXL.new(nil, { version = version, binary_path = { [ARCH[1]] = binary_stat.abs_path }, datadir_path = data_stat.abs_path, path = path_stat.abs_path, mod_version = mod_version or LATEST_MOD_VERSION }))
+    table.insert(pragticals, Pragtical.new(nil, { version = version, binary_path = { [ARCH[1]] = binary_stat.abs_path }, datadir_path = data_stat.abs_path, path = path_stat.abs_path, mod_version = mod_version or LATEST_MOD_VERSION }))
   end
-  lpm.lite_xl_save()
+  ppm.pragtical_save()
 end
 
-function lpm.lite_xl_rm(version)
+function ppm.pragtical_rm(version)
   if not version then error("requires a version") end
-  local lite_xl = lpm.get_lite_xl(version) or error("can't find lite_xl version " .. version)
-  lite_xls = common.grep(lite_xls, function(l) return l ~= lite_xl end)
-  lpm.lite_xl_save()
+  local pragtical = ppm.get_pragtical(version) or error("can't find pragtical version " .. version)
+  pragticals = common.grep(pragticals, function(l) return l ~= pragtical end)
+  ppm.pragtical_save()
 end
 
-function lpm.lite_xl_install(version)
+function ppm.pragtical_install(version)
   if not version then error("requires a version") end
-  (lpm.get_lite_xl(version) or error("can't find lite-xl version " .. version)):install()
+  (ppm.get_pragtical(version) or error("can't find pragtical version " .. version)):install()
 end
 
 
-function lpm.lite_xl_switch(version, target)
-  primary_lite_xl = (lpm.get_lite_xl(version) or error("can't find lite-xl version " .. version))
-  lpm.lite_xl_save()
+function ppm.pragtical_switch(version, target)
+  primary_pragtical = (ppm.get_pragtical(version) or error("can't find pragtical version " .. version))
+  ppm.pragtical_save()
 end
 
 
-function lpm.lite_xl_uninstall(version)
-  (lpm.get_lite_xl(version) or error("can't find lite-xl version " .. version)):uninstall()
+function ppm.pragtical_uninstall(version)
+  (ppm.get_pragtical(version) or error("can't find pragtical version " .. version)):uninstall()
 end
 
 
-function lpm.lite_xl_list()
-  local result = { ["lite-xls"] = { } }
+function ppm.pragtical_list()
+  local result = { ["pragticals"] = { } }
   local max_version = 0
-  for i,lite_xl in ipairs(lite_xls) do
-    table.insert(result["lite-xls"], {
-      version = lite_xl.version,
-      mod_version = lite_xl.mod_version,
-      tags = lite_xl.tags,
-      is_installed = lite_xl:is_installed(),
-      status = (lite_xl:is_installed() or lite_xl:is_system()) and (lite_xl:is_local() and "local" or "installed") or "available",
-      local_path = lite_xl:is_installed() and lite_xl.local_path or nil,
-      datadir_path = lite_xl:is_installed() and lite_xl.datadir_path or nil,
-      binary_path = lite_xl:is_installed() and lite_xl.binary_path or nil,
-      files = lite_xl.files
+  for i,pragtical in ipairs(pragticals) do
+    table.insert(result["pragticals"], {
+      version = pragtical.version,
+      mod_version = pragtical.mod_version,
+      tags = pragtical.tags,
+      is_installed = pragtical:is_installed(),
+      status = (pragtical:is_installed() or pragtical:is_system()) and (pragtical:is_local() and "local" or "installed") or "available",
+      local_path = pragtical:is_installed() and pragtical.local_path or nil,
+      datadir_path = pragtical:is_installed() and pragtical.datadir_path or nil,
+      binary_path = pragtical:is_installed() and pragtical.binary_path or nil,
+      files = pragtical.files
     })
-    max_version = math.max(max_version, #lite_xl.version)
+    max_version = math.max(max_version, #pragtical.version)
   end
   for i,repo in ipairs(repositories) do
-    if not repo.lite_xls then error("can't find lite-xl for repo " .. repo:url()) end
-    for j, lite_xl in ipairs(repo.lite_xls) do
-      if not common.first(result["lite-xls"], function(l) return l.version == lite_xl.version end) then
-        table.insert(result["lite-xls"], {
-          version = lite_xl.version,
-          mod_version = lite_xl.mod_version,
+    if not repo.pragticals then error("can't find pragtical for repo " .. repo:url()) end
+    for j, pragtical in ipairs(repo.pragticals) do
+      if not common.first(result["pragticals"], function(l) return l.version == pragtical.version end) then
+        table.insert(result["pragticals"], {
+          version = pragtical.version,
+          mod_version = pragtical.mod_version,
           repository = repo:url(),
-          tags = lite_xl.tags,
-          is_installed = lite_xl:is_installed(),
-          status = (lite_xl:is_installed() or lite_xl:is_system()) and (lite_xl:is_local() and "local" or "installed") or "available",
-          local_path = lite_xl:is_installed() and lite_xl.local_path
+          tags = pragtical.tags,
+          is_installed = pragtical:is_installed(),
+          status = (pragtical:is_installed() or pragtical:is_system()) and (pragtical:is_local() and "local" or "installed") or "available",
+          local_path = pragtical:is_installed() and pragtical.local_path
         })
-        max_version = math.max(max_version, #lite_xl.version)
+        max_version = math.max(max_version, #pragtical.version)
       end
     end
   end
@@ -1976,22 +1978,22 @@ function lpm.lite_xl_list()
     io.stdout:write(json.encode(result) .. "\n")
   else
     if VERBOSE then
-      for i, lite_xl in ipairs(result["lite-xls"]) do
+      for i, pragtical in ipairs(result["pragticals"]) do
         if i ~= 0 then print("---------------------------") end
-        print("Version:       " .. lite_xl.version)
-        print("Status:        " .. lite_xl.status)
-        print("Mod-Version:   " .. (lite_xl.mod_version or "unknown"))
-        print("Tags:          " .. common.join(", ", lite_xl.tags))
+        print("Version:       " .. pragtical.version)
+        print("Status:        " .. pragtical.status)
+        print("Mod-Version:   " .. (pragtical.mod_version or "unknown"))
+        print("Tags:          " .. common.join(", ", pragtical.tags))
       end
     else
       max_version = max_version + 2
       print(string.format("%" .. max_version .. "s | %10s | %s", "Version", "Status", "Location"))
       print(string.format("%" .. max_version .."s | %10s | %s", "-------", "---------", "---------------------------"))
-      for i, lite_xl in ipairs(result["lite-xls"]) do
-        print(string.format("%" .. max_version .. "s | %10s | %s", 
-          (common.first(lite_xl.tags, function(t) return t == "primary" end) and "* " or "") .. lite_xl.version, 
-          lite_xl.status, 
-          (lite_xl.is_installed and lite_xl.local_path or lite_xl.repository))
+      for i, pragtical in ipairs(result["pragticals"]) do
+        print(string.format("%" .. max_version .. "s | %10s | %s",
+          (common.first(pragtical.tags, function(t) return t == "primary" end) and "* " or "") .. pragtical.version,
+          pragtical.status,
+          (pragtical.is_installed and pragtical.local_path or pragtical.repository))
         )
       end
     end
@@ -2002,11 +2004,11 @@ local function is_argument_repo(arg)
   return arg:find("^http") or arg:find("[\\/]") or arg == "."
 end
 
-local function is_lite_xl_bundle(arg)
+local function is_pragtical_bundle(arg)
   return arg:find("^http") or (arg:find("%.tar%.gz$") and arg:find("%.zip$"))
 end
 
-function lpm.retrieve_addons(lite_xl, arguments, filters)
+function ppm.retrieve_addons(pragtical, arguments, filters)
   local addons = {}
   local i = 1
   while i <= #arguments do
@@ -2020,7 +2022,7 @@ function lpm.retrieve_addons(lite_xl, arguments, filters)
       local repo, remainder = common.split("@", str)
       if not remainder then repo = nil end
       local id, version = common.split(":", remainder or str)
-      local potentials = { system_bottle:get_addon(id, version, common.merge({ mod_version = (MOD_VERSION ~= "any" and (MOD_VERSION or lite_xl.mod_version)), repository = repo }, filters or {})) }
+      local potentials = { system_bottle:get_addon(id, version, common.merge({ mod_version = (MOD_VERSION ~= "any" and (MOD_VERSION or pragtical.mod_version)), repository = repo }, filters or {})) }
       local uniq = {}
       local found_one = false
       for i, addon in ipairs(potentials) do
@@ -2044,9 +2046,9 @@ function lpm.retrieve_addons(lite_xl, arguments, filters)
   return addons, i
 end
 
-function lpm.apply(...)
+function ppm.apply(...)
   local arguments = { ... }
-  local addons, i = lpm.retrieve_addons(system_bottle.lite_xl, arguments)
+  local addons, i = ppm.retrieve_addons(system_bottle.pragtical, arguments)
   if #arguments >= i then error("invalid use of --") end
   local changed = system_bottle:apply(addons, CONFIG)
   if JSON then
@@ -2056,8 +2058,8 @@ function lpm.apply(...)
   end
 end
 
-function lpm.retrieve_installable_addons(lite_xl, arguments, filters)
-  local potential_addons, i = lpm.retrieve_addons(lite_xl, arguments, filters)
+function ppm.retrieve_installable_addons(pragtical, arguments, filters)
+  local potential_addons, i = ppm.retrieve_addons(pragtical, arguments, filters)
   return common.map(potential_addons, function(potentials)
     return common.grep(potentials, function(addon)
       return not addon:is_core(system_bottle) and not addon:is_orphan(system_bottle)
@@ -2065,7 +2067,7 @@ function lpm.retrieve_installable_addons(lite_xl, arguments, filters)
   end), i
 end
 
-function lpm.lite_xl_run(...)
+function ppm.pragtical_run(...)
   local bottle = nil
   local version, version_idx = "primary", 1
   local arguments = { }
@@ -2073,11 +2075,11 @@ function lpm.lite_xl_run(...)
     if v:find("^%d+") or v == "system" or v == "primary" then
       assert(version == "primary", "cannot specify multiple versions")
       version, version_idx = v, i
-    elseif i == 1 and is_lite_xl_bundle(v) then
-      table.insert(lite_xls, LiteXL.new(nil, { version = "transient", mod_version = MOD_VERSION or LATEST_MOD_VERSION, files = { { arch = ARCH, checksum = "SKIP", url = v } } }))
+    elseif i == 1 and is_pragtical_bundle(v) then
+      table.insert(pragticals, Pragtical.new(nil, { version = "transient", mod_version = MOD_VERSION or LATEST_MOD_VERSION, files = { { arch = ARCH, checksum = "SKIP", url = v } } }))
       version = "transient"
     elseif i == 1 then
-      bottle = lpm.get_bottle(v)
+      bottle = ppm.get_bottle(v)
       if not bottle then table.insert(arguments, v) end
     else
       table.insert(arguments, v)
@@ -2089,9 +2091,9 @@ function lpm.lite_xl_run(...)
     repositories[1].explicit = true
     table.remove(arguments, 1)
   end
-  local lite_xl = (bottle and bottle.lite_xl) or lpm.get_lite_xl(version) or error("can't find lite-xl version " .. version)
-  local addons, i = lpm.retrieve_installable_addons(lite_xl, arguments)
-  bottle = bottle or Bottle.new({ lite_xl = lite_xl, addons = addons, config = CONFIG })
+  local pragtical = (bottle and bottle.pragtical) or ppm.get_pragtical(version) or error("can't find pragtical version " .. version)
+  local addons, i = ppm.retrieve_installable_addons(pragtical, arguments)
+  bottle = bottle or Bottle.new({ pragtical = pragtical, addons = addons, config = CONFIG })
   if not bottle:is_constructed() or REINSTALL then bottle:construct() end
   return function()
     bottle:run(common.slice(arguments, i + 1))
@@ -2100,11 +2102,11 @@ function lpm.lite_xl_run(...)
 end
 
 
-function lpm.install(type, ...)
+function ppm.install(type, ...)
   local arguments = { ... }
   for i, identifier in ipairs(arguments) do
     local id, version = common.split(":", identifier)
-    if id == "lite-xl" then lpm.lite_xl_install(version)
+    if id == "pragtical" then ppm.pragtical_install(version)
       table.remove(arguments, i)
       break
     end
@@ -2112,11 +2114,11 @@ function lpm.install(type, ...)
   local to_install = {}
   local to_explicitly_install = {}
 
-  local potential_addon_list = lpm.retrieve_addons(system_bottle.lite_xl, arguments, { type = type })
+  local potential_addon_list = ppm.retrieve_addons(system_bottle.pragtical, arguments, { type = type })
   for i, potential_addons in ipairs(potential_addon_list) do
     local id = potential_addons[1].id
     local addons = common.grep(potential_addons, function(e) return e:is_installable(system_bottle) and (not e:is_installed(system_bottle) or REINSTALL) end)
-    if #addons == 0 and #potential_addons == 0 then error("can't find " .. (type or "addon") .. " " .. id .. " mod-version: " .. (system_bottle.lite_xl.mod_version or 'any')) end
+    if #addons == 0 and #potential_addons == 0 then error("can't find " .. (type or "addon") .. " " .. id .. " mod-version: " .. (system_bottle.pragtical.mod_version or 'any')) end
     if #addons == 0 then
       log.warning((potential_addons[1].type or "addon") .. " " .. id .. " already installed")
       if not common.first(settings.installed, id) then table.insert(to_explicitly_install, id) end
@@ -2135,7 +2137,7 @@ function lpm.install(type, ...)
     end
   end)
   settings.installed = common.concat(settings.installed, to_explicitly_install)
-  lpm.settings_save()
+  ppm.settings_save()
 end
 
 local function get_table(headers, rows, options)
@@ -2169,14 +2171,14 @@ local function print_addon_info(type, addons, filters)
     elseif addon.path then url = addon.path end
     local hash = {
       id = addon.id,
-      status = addon.repository and (addon:is_installed(system_bottle) and "installed" or (system_bottle.lite_xl:is_compatible(addon) and "available" or "incompatible")) or (addon:is_bundled(system_bottle) and "bundled" or (addon:is_core(system_bottle) and "core" or (addon:is_upgradable(system_bottle) and "upgradable" or "orphan"))),
+      status = addon.repository and (addon:is_installed(system_bottle) and "installed" or (system_bottle.pragtical:is_compatible(addon) and "available" or "incompatible")) or (addon:is_bundled(system_bottle) and "bundled" or (addon:is_core(system_bottle) and "core" or (addon:is_upgradable(system_bottle) and "upgradable" or "orphan"))),
       stub = (addon:is_stub() and "git" or false),
       name = addon.name or addon.id,
       version = "" .. addon.version,
       dependencies = addon.dependencies,
       remote = addon.remote,
       description = addon.description,
-      author = addon.extra and addon.extra.author or (addon:is_core(system_bottle) and "lite-xl") or nil,
+      author = addon.extra and addon.extra.author or (addon:is_core(system_bottle) and "pragtical") or nil,
       extra = addon.extra,
       mod_version = addon.mod_version or LATEST_MOD_VERSION,
       tags = addon.tags,
@@ -2244,10 +2246,10 @@ local function print_addon_info(type, addons, filters)
 end
 
 
-function lpm.unstub(type, ...)
+function ppm.unstub(type, ...)
   local addons = {}
   local arguments = { ... }
-  for i, potential_addon in ipairs(lpm.retrieve_addons(primary_lite_xl, arguments)) do
+  for i, potential_addon in ipairs(ppm.retrieve_addons(primary_pragtical, arguments)) do
     local stubbed_addons = common.grep(potential_addon, function(e) return e:is_stub() end)
     assert_warning(#stubbed_addons > 0, (potential_addon[1].type or "addon") .. " " .. potential_addon[1].id .. " already unstubbed")
     common.each(stubbed_addons, function(e) e:unstub() end)
@@ -2257,7 +2259,7 @@ function lpm.unstub(type, ...)
 end
 
 
-function lpm.addon_uninstall(type, ...)
+function ppm.addon_uninstall(type, ...)
   for i, id in ipairs({ ... }) do
     local addons = { system_bottle:get_addon(id, nil, { type = type }) }
     if #addons == 0 then error("can't find addon " .. id) end
@@ -2268,12 +2270,12 @@ function lpm.addon_uninstall(type, ...)
       settings.installed = common.grep(settings.installed, function(e) return e ~= addon.id end)
     end
   end
-  lpm.settings_save()
+  ppm.settings_save()
 end
 
-function lpm.addon_reinstall(type, ...) for i, id in ipairs({ ... }) do pcall(lpm.addon_uninstall, type, id) end lpm.install(type, ...) end
+function ppm.addon_reinstall(type, ...) for i, id in ipairs({ ... }) do pcall(ppm.addon_uninstall, type, id) end ppm.install(type, ...) end
 
-function lpm.repo_list()
+function ppm.repo_list()
   if JSON then
     io.stdout:write(json.encode({ repositories = common.map(repositories, function(repo) return { remote = repo.remote, commit = repo.commit, branch = repo.branch, path = repo.local_path, remotes = common.map(repo.remotes or {}, function(r) return r:url() end)  } end) }) .. "\n")
   else
@@ -2287,77 +2289,77 @@ function lpm.repo_list()
   end
 end
 
-function lpm.addon_list(type, id, filters)
+function ppm.addon_list(type, id, filters)
   print_addon_info(type, common.grep(system_bottle:all_addons(), function(p) return (not type or p.type == type) and (not id or p.id:find(id)) end), filters)
 end
 
-function lpm.describe()
+function ppm.describe()
   local repo_urls = common.grep(common.map(repositories, function(e) return e:url() end), function(url) return #common.grep(DEFAULT_REPOS, function(r) return r:url() == url end) == 0  end)
-  print("lpm run " .. common.join(" ", { system_bottle.lite_xl.version, table.unpack(repo_urls) }) .. " " .. common.join(" ", common.map(system_bottle:installed_addons(), function(p) return p.id .. ":" .. p.version end)))
+  print("ppm run " .. common.join(" ", { system_bottle.pragtical.version, table.unpack(repo_urls) }) .. " " .. common.join(" ", common.map(system_bottle:installed_addons(), function(p) return p.id .. ":" .. p.version end)))
 end
 
-function lpm.addon_upgrade()
+function ppm.addon_upgrade()
   for _,addon in ipairs(system_bottle:installed_addons()) do
     local upgrade = common.sort({ system_bottle:get_addon(addon.id, ">" .. addon.version) }, function(a, b) return compare_version(b.version, a.version) end)[1]
     if upgrade then upgrade:install(system_bottle) end
   end
 end
 
-function lpm.self_upgrade(release)
-  if not DEFAULT_RELEASE_URL or #DEFAULT_RELEASE_URL == 0 then error("self-upgrade has been disabled on lpm version " .. VERSION .. "; please upgrade it however you installed it") end
+function ppm.self_upgrade(release)
+  if not DEFAULT_RELEASE_URL or #DEFAULT_RELEASE_URL == 0 then error("self-upgrade has been disabled on ppm version " .. VERSION .. "; please upgrade it however you installed it") end
   release = release or "latest"
   local release_url = release and release:find("^https://") and release or (DEFAULT_RELEASE_URL:gsub("%%r", release))
   local stat = EXEFILE and system.stat(EXEFILE)
-  if not stat then error("can't find lpm at " .. EXEFILE) end
-  local new_temporary_file = SYSTMPDIR ..  PATHSEP .. "lpm.upgrade"
-  local old_temporary_file = SYSTMPDIR ..  PATHSEP .. "lpm.backup"
+  if not stat then error("can't find ppm at " .. EXEFILE) end
+  local new_temporary_file = SYSTMPDIR ..  PATHSEP .. "ppm.upgrade"
+  local old_temporary_file = SYSTMPDIR ..  PATHSEP .. "ppm.backup"
   common.rmrf(new_temporary_file)
   common.rmrf(old_temporary_file)
   local status, err = pcall(common.get, release_url, { cache = SYSTMPDIR, target = new_temporary_file, callback = write_progress_bar })
-  if not status then error("can't find release for lpm at " .. release_url .. (VERBOSE and (": " .. err) or  "")) end
+  if not status then error("can't find release for ppm at " .. release_url .. (VERBOSE and (": " .. err) or  "")) end
   if common.is_path_different(new_temporary_file, EXEFILE) then
     status, err = pcall(common.rename, EXEFILE, old_temporary_file)
-    if not status then error("can't move lpm executable; do you need to " .. (PLATFORM == "windows" and "run as administrator" or "be root") .. "?" .. (VERBOSE and ": " .. err or "")) end
+    if not status then error("can't move ppm executable; do you need to " .. (PLATFORM == "windows" and "run as administrator" or "be root") .. "?" .. (VERBOSE and ": " .. err or "")) end
     common.rename(new_temporary_file, EXEFILE)
     system.chmod(EXEFILE, stat.mode)
     if PLATFORM ~= "windows" then -- because we can't delete the running executbale on windows
       common.rmrf(old_temporary_file)
     end
-    log.action("Upgraded lpm to " .. release .. ".")
+    log.action("Upgraded ppm to " .. release .. ".")
   else
     log.warning("aborting upgrade; remote executable is identical to current")
     common.rmrf(new_temporary_file)
   end
 end
 
-function lpm.get_bottle(name)
+function ppm.get_bottle(name)
   local bottle = Bottle.new({ name = name })
   if not bottle:is_constructed() then return nil end
-  return bottle 
+  return bottle
 end
 
-function lpm.bottle_add(name, version, ...)
+function ppm.bottle_add(name, version, ...)
   if not name:find("^[a-z0-9A-Z%-%._]+$") then error("invalid name for bottle, must be ^[a-z0-9A-Z%-%._]+$") end
   local arguments = { ... }
-  if not version:find("^%d+") and version ~= "system" and version ~= "primary" then 
+  if not version:find("^%d+") and version ~= "system" and version ~= "primary" then
     table.insert(arguments, 1, version)
     version = nil
   end
-  local lite_xl = lpm.get_lite_xl(version or "primary") or error("can't find lite-xl version " .. (version or "primary"))
-  local addons, i = lpm.retrieve_installable_addons(lite_xl, arguments)
+  local pragtical = ppm.get_pragtical(version or "primary") or error("can't find pragtical version " .. (version or "primary"))
+  local addons, i = ppm.retrieve_installable_addons(pragtical, arguments)
   if #arguments >= i then error("invalid use of --") end
-  Bottle.new({ lite_xl = version and lite_xl, name = name, addons = addons, config = CONFIG }):construct()
+  Bottle.new({ pragtical = version and pragtical, name = name, addons = addons, config = CONFIG }):construct()
 end
 
-function lpm.bottle_rm(name)
+function ppm.bottle_rm(name)
   Bottle.new({ name = name }):destruct()
 end
 
-function lpm.bottle_run(name, ...)
-  (lpm.get_bottle(name) or error("can't find bottle " .. name)):run(...)
+function ppm.bottle_run(name, ...)
+  (ppm.get_bottle(name) or error("can't find bottle " .. name)):run(...)
 end
 
-function lpm.bottle_list(name, ...)
+function ppm.bottle_list(name, ...)
   local named_folder = BOTTLEDIR .. PATHSEP .. "named"
   local bottles = common.map(system.stat(named_folder) and system.ls(named_folder) or {}, function(e) return Bottle.new({ name = e }) end)
   local result = { ["bottles"] = { } }
@@ -2366,7 +2368,7 @@ function lpm.bottle_list(name, ...)
     table.insert(result.bottles, {
       name = bottle.name,
       local_path = bottle.local_path,
-      lite_xl = bottle.lite_xl and bottle.lite_xl.version or nil
+      pragtical = bottle.pragtical and bottle.pragtical.version or nil
     })
   end
   if JSON then
@@ -2377,38 +2379,38 @@ function lpm.bottle_list(name, ...)
         if i ~= 0 then print("---------------------------") end
         print("Name:       " .. bottle.name)
         print("Path:       " .. bottle.local_path)
-        print("Version:    " .. (bottle.lite_xl or "none"))
+        print("Version:    " .. (bottle.pragtical or "none"))
       end
     else
-      print(get_table({ "Name", "Version", "Path" }, common.map(result.bottles, function(b) return { b.name, b.lite_xl or "none", b.local_path } end)))
+      print(get_table({ "Name", "Version", "Path" }, common.map(result.bottles, function(b) return { b.name, b.pragtical or "none", b.local_path } end)))
     end
   end
 end
 
-function lpm.bottle_purge()
+function ppm.bottle_purge()
   common.rmrf(BOTTLEDIR)
   log.action("Purged " .. BOTTLEDIR .. ".", "green")
 end
 
-function lpm.cache_purge()
+function ppm.cache_purge()
   for i, dir in ipairs({ TMPDIR, CACHEDIR }) do
     common.rmrf(dir)
     log.action("Purged " .. dir .. ".", "green")
   end
 end
 
-function lpm.purge()
+function ppm.purge()
   for i, dir in ipairs({ BOTTLEDIR, CONFIGDIR, TMPDIR, CACHEDIR }) do
     common.rmrf(dir)
     log.action("Purged " .. dir .. ".", "green")
   end
 end
 
--- Base setup; initialize default repos if applicable, read them in. Determine Lite XL system binary if not specified, and pull in a list of all local lite-xl's.
-function lpm.setup()
-  settings = { lite_xls = {}, repositories = {}, installed = {}, version = VERSION }
-  lpm.repo_init(ARGS[2] == "init" and #ARGS > 2 and (ARGS[3] ~= "none" and common.map(common.slice(ARGS, 3), function(url) return Repository.url(url) end) or {}) or nil)
-  repositories, lite_xls = {}, {}
+-- Base setup; initialize default repos if applicable, read them in. Determine Pragtical system binary if not specified, and pull in a list of all local pragtical's.
+function ppm.setup()
+  settings = { pragticals = {}, repositories = {}, installed = {}, version = VERSION }
+  ppm.repo_init(ARGS[2] == "init" and #ARGS > 2 and (ARGS[3] ~= "none" and common.map(common.slice(ARGS, 3), function(url) return Repository.url(url) end) or {}) or nil)
+  repositories, pragticals = {}, {}
   if system.stat(CONFIGDIR .. PATHSEP .. "settings.json") then settings = json.decode(common.read(CONFIGDIR .. PATHSEP .. "settings.json")) end
   if REPOSITORY then
     for i, url in ipairs(type(REPOSITORY) == "table" and REPOSITORY or { REPOSITORY }) do
@@ -2417,109 +2419,109 @@ function lpm.setup()
   else
     repositories = common.map(settings.repositories or {}, function(url) local repo = Repository.url(url) repo:fetch_if_not_present():parse_manifest() return repo end)
   end
-  lite_xls = {}
-  for i, lite_xl in ipairs(settings.lite_xls or {}) do
-    table.insert(lite_xls, LiteXL.new(nil, { version = lite_xl.version, mod_version = lite_xl.mod_version, binary_path = lite_xl.binary_path, datadir_path = lite_xl.datadir_path, files = lite_xl.files, path = lite_xl.path, tags = { "local" } }))
-    if lite_xl.primary then 
-      primary_lite_xl = lite_xls[#lite_xls] 
-      table.insert(primary_lite_xl.tags, "primary")
+  pragticals = {}
+  for i, pragtical in ipairs(settings.pragticals or {}) do
+    table.insert(pragticals, Pragtical.new(nil, { version = pragtical.version, mod_version = pragtical.mod_version, binary_path = pragtical.binary_path, datadir_path = pragtical.datadir_path, files = pragtical.files, path = pragtical.path, tags = { "local" } }))
+    if pragtical.primary then
+      primary_pragtical = pragticals[#pragticals]
+      table.insert(primary_pragtical.tags, "primary")
     end
   end
 
   if BINARY and not system.stat(BINARY) then error("can't find specified --binary") end
   if DATADIR and not system.stat(DATADIR) then error("can't find specified --datadir") end
-  local lite_xl_binary = BINARY or common.path("lite-xl" .. EXECUTABLE_EXTENSION)
-  if lite_xl_binary then
-    local stat = system.stat(lite_xl_binary)
-    if not stat then error("can't find lite-xl binary " .. lite_xl_binary) end
-    lite_xl_binary = stat.symlink or lite_xl_binary
-    local system_lite_xl = common.first(common.concat(common.flat_map(repositories, function(r) return r.lite_xls end), lite_xls), function(lite_xl) return lite_xl:get_binary_path() == lite_xl_binary end)
-    if not system_lite_xl then
-      system_lite_xl = common.first(lite_xls, function(e) return e.version == "system" end)
+  local pragtical_binary = BINARY or common.path("pragtical" .. EXECUTABLE_EXTENSION)
+  if pragtical_binary then
+    local stat = system.stat(pragtical_binary)
+    if not stat then error("can't find pragtical binary " .. pragtical_binary) end
+    pragtical_binary = stat.symlink or pragtical_binary
+    local system_pragtical = common.first(common.concat(common.flat_map(repositories, function(r) return r.pragticals end), pragticals), function(pragtical) return pragtical:get_binary_path() == pragtical_binary end)
+    if not system_pragtical then
+      system_pragtical = common.first(pragticals, function(e) return e.version == "system" end)
 
-      local directory = common.dirname(lite_xl_binary)
-      local lite_xl_datadirs = { DATADIR or "", directory .. PATHSEP .. "data", directory:find(PATHSEP .. "bin$") and common.dirname(directory) .. PATHSEP .. "share" .. PATHSEP .. "lite-xl" or "", directory .. PATHSEP .. "data" }
-      local lite_xl_datadir = common.first(lite_xl_datadirs, function(p) return p and system.stat(p) end)
+      local directory = common.dirname(pragtical_binary)
+      local pragtical_datadirs = { DATADIR or "", directory .. PATHSEP .. "data", directory:find(PATHSEP .. "bin$") and common.dirname(directory) .. PATHSEP .. "share" .. PATHSEP .. "pragtical" or "", directory .. PATHSEP .. "data" }
+      local pragtical_datadir = common.first(pragtical_datadirs, function(p) return p and system.stat(p) end)
 
-      if not BINARY and not DATADIR and system_lite_xl then error("can't find existing system lite (does " .. system_lite_xl:get_binary_path() .. " exist? was it moved?); run `lpm purge`, or specify --binary and --datadir.") end
+      if not BINARY and not DATADIR and system_pragtical then error("can't find existing system pragtical (does " .. system_pragtical:get_binary_path() .. " exist? was it moved?); run `ppm purge`, or specify --binary and --datadir.") end
       local mod_version = MOD_VERSION
-      if lite_xl_datadir and (mod_version == "any" or not mod_version) then
-        local path = lite_xl_datadir .. PATHSEP .. "core" .. PATHSEP .. "start.lua"
+      if pragtical_datadir and (mod_version == "any" or not mod_version) then
+        local path = pragtical_datadir .. PATHSEP .. "core" .. PATHSEP .. "start.lua"
         if system.stat(path) then
           mod_version = common.read(path):match("MOD_VERSION_MAJOR%s=%s(%d+)")
         end
       end
-      local detected_lite_xl = LiteXL.new(nil, { path = directory, datadir_path = lite_xl_datadir, binary_path = { [DEFAULT_ARCH] = lite_xl_binary }, mod_version = mod_version or LATEST_MOD_VERSION, version = "system", tags = { "system", "local" } })
-      if not system_lite_xl then
-        system_lite_xl = detected_lite_xl
-        table.insert(lite_xls, system_lite_xl)
+      local detected_pragtical = Pragtical.new(nil, { path = directory, datadir_path = pragtical_datadir, binary_path = { [DEFAULT_ARCH] = pragtical_binary }, mod_version = mod_version or LATEST_MOD_VERSION, version = "system", tags = { "system", "local" } })
+      if not system_pragtical then
+        system_pragtical = detected_pragtical
+        table.insert(pragticals, system_pragtical)
       else
-        lite_xls = common.grep(lite_xls, function(e) return e ~= system_lite_xl end)
-        system_lite_xl = detected_lite_xl
-        table.insert(lite_xls, system_lite_xl)
+        pragticals = common.grep(pragticals, function(e) return e ~= system_pragtical end)
+        system_pragtical = detected_pragtical
+        table.insert(pragticals, system_pragtical)
       end
     else
-      if DATADIR then system_lite_xl.datadir_path = DATADIR end
-      if MOD_VERSION then system_lite_xl.mod_version = MOD_VERSION end
-      table.insert(system_lite_xl.tags, "system")
+      if DATADIR then system_pragtical.datadir_path = DATADIR end
+      if MOD_VERSION then system_pragtical.mod_version = MOD_VERSION end
+      table.insert(system_pragtical.tags, "system")
     end
-    system_bottle = Bottle.new({ lite_xl = system_lite_xl, is_system = true })
-    if not primary_lite_xl then 
-      primary_lite_xl = system_lite_xl 
-      table.insert(system_lite_xl.tags, "primary")
+    system_bottle = Bottle.new({ pragtical = system_pragtical, is_system = true })
+    if not primary_pragtical then
+      primary_pragtical = system_pragtical
+      table.insert(system_pragtical.tags, "primary")
     end
   else
-    system_bottle = Bottle.new({ lite_xl = LiteXL.new(nil, { mod_version = MOD_VERSION or LATEST_MOD_VERSION, datadir_path = DATADIR, version = "system", tags = { "system", "local" } }), is_system = true })
+    system_bottle = Bottle.new({ pragtical = Pragtical.new(nil, { mod_version = MOD_VERSION or LATEST_MOD_VERSION, datadir_path = DATADIR, version = "system", tags = { "system", "local" } }), is_system = true })
   end
   if not system_bottle then system_bottle = Bottle.new({ is_system = true }) end
-  if not primary_lite_xl then primary_lite_xl = lite_xls[1] end
+  if not primary_pragtical then primary_pragtical = pragticals[1] end
 end
 
-function lpm.command(ARGS)
+function ppm.command(ARGS)
   if not ARGS[2]:find("%S") then return
   elseif ARGS[2] == "init" then return
-  elseif ARGS[2] == "repo" and ARGS[3] == "add" then lpm.repo_add(table.unpack(common.slice(ARGS, 4)))
-  elseif ARGS[2] == "repo" and ARGS[3] == "rm" then lpm.repo_rm(table.unpack(common.slice(ARGS, 4)))
-  elseif ARGS[2] == "add" then lpm.repo_add(table.unpack(common.slice(ARGS, 3)))
-  elseif ARGS[2] == "rm" then lpm.repo_rm(table.unpack(common.slice(ARGS, 3)))
-  elseif ARGS[2] == "update" then lpm.repo_update(table.unpack(common.slice(ARGS, 3)))
-  elseif ARGS[2] == "repo" and ARGS[3] == "update" then lpm.repo_update(table.unpack(common.slice(ARGS, 4)))
-  elseif ARGS[2] == "repo" and (#ARGS == 2 or ARGS[3] == "list") then return lpm.repo_list()
-  elseif ARGS[2] == "apply" then return lpm.apply(table.unpack(common.slice(ARGS, 3)))
-  elseif (ARGS[2] == "plugin" or ARGS[2] == "color" or ARGS[2] == "library" or ARGS[2] == "font") and ARGS[3] == "install" then lpm.install(ARGS[2], table.unpack(common.slice(ARGS, 4)))
-  elseif (ARGS[2] == "plugin" or ARGS[2] == "color" or ARGS[2] == "library" or ARGS[2] == "font") and ARGS[3] == "uninstall" then lpm.addon_uninstall(ARGS[2], table.unpack(common.slice(ARGS, 4)))
-  elseif (ARGS[2] == "plugin" or ARGS[2] == "color" or ARGS[2] == "library" or ARGS[2] == "font") and ARGS[3] == "reinstall" then lpm.addon_reinstall(ARGS[2], table.unpack(common.slice(ARGS, 4)))
-  elseif (ARGS[2] == "plugin" or ARGS[2] == "color" or ARGS[2] == "library" or ARGS[2] == "font") and (#ARGS == 2 or ARGS[3] == "list") then return lpm.addon_list(ARGS[2], ARGS[4], ARGS)
-  elseif ARGS[2] == "upgrade" then return lpm.addon_upgrade(table.unpack(common.slice(ARGS, 3)))
-  elseif ARGS[2] == "install" then lpm.install(nil, table.unpack(common.slice(ARGS, 3)))
-  elseif ARGS[2] == "unstub" then return lpm.unstub(nil, table.unpack(common.slice(ARGS, 3)))
-  elseif ARGS[2] == "uninstall" then lpm.addon_uninstall(nil, table.unpack(common.slice(ARGS, 3)))
-  elseif ARGS[2] == "reinstall" then lpm.addon_reinstall(nil, table.unpack(common.slice(ARGS, 3)))
-  elseif ARGS[2] == "describe" then lpm.describe(nil, table.unpack(common.slice(ARGS, 3)))
-  elseif ARGS[2] == "list" then return lpm.addon_list(nil, ARGS[3], ARGS)
-  elseif ARGS[2] == "lite-xl" and (#ARGS == 2 or ARGS[3] == "list") then return lpm.lite_xl_list(table.unpack(common.slice(ARGS, 4)))
-  elseif ARGS[2] == "lite-xl" and ARGS[3] == "uninstall" then return lpm.lite_xl_uninstall(table.unpack(common.slice(ARGS, 4)))
-  elseif ARGS[2] == "lite-xl" and ARGS[3] == "install" then return lpm.lite_xl_install(table.unpack(common.slice(ARGS, 4)))
-  elseif ARGS[2] == "lite-xl" and ARGS[3] == "switch" then return lpm.lite_xl_switch(table.unpack(common.slice(ARGS, 4)))
-  elseif ARGS[2] == "lite-xl" and ARGS[3] == "run" then return lpm.lite_xl_run(table.unpack(common.slice(ARGS, 4)))
-  elseif ARGS[2] == "lite-xl" and ARGS[3] == "add" then return lpm.lite_xl_add(table.unpack(common.slice(ARGS, 4)))
-  elseif ARGS[2] == "lite-xl" and ARGS[3] == "rm" then return lpm.lite_xl_rm(table.unpack(common.slice(ARGS, 4)))
-  elseif ARGS[2] == "lite-xl" then error("unknown lite-xl command: " .. ARGS[3])
-  elseif ARGS[2] == "bottle" and ARGS[3] == "add" then return lpm.bottle_add(table.unpack(common.slice(ARGS, 4)))
-  elseif ARGS[2] == "bottle" and ARGS[3] == "rm" then return lpm.bottle_rm(table.unpack(common.slice(ARGS, 4)))
-  elseif ARGS[2] == "bottle" and ARGS[3] == "run" then return lpm.bottle_run(table.unpack(common.slice(ARGS, 4)))
-  elseif ARGS[2] == "bottle" and ARGS[3] == "list" then return lpm.bottle_list(table.unpack(common.slice(ARGS, 4)))
-  elseif ARGS[2] == "bottle" and ARGS[3] == "purge" then return lpm.bottle_purge(common.slice(ARGS, 4))
-  elseif ARGS[2] == "cache" and ARGS[3] == "purge" then return lpm.cache_purge(common.slice(ARGS, 4))
-  elseif ARGS[2] == "run" then return lpm.lite_xl_run(table.unpack(common.slice(ARGS, 3)))
-  elseif ARGS[2] == "switch" then return lpm.lite_xl_switch(table.unpack(common.slice(ARGS, 3)))
-  elseif ARGS[2] == "purge" then lpm.purge()
+  elseif ARGS[2] == "repo" and ARGS[3] == "add" then ppm.repo_add(table.unpack(common.slice(ARGS, 4)))
+  elseif ARGS[2] == "repo" and ARGS[3] == "rm" then ppm.repo_rm(table.unpack(common.slice(ARGS, 4)))
+  elseif ARGS[2] == "add" then ppm.repo_add(table.unpack(common.slice(ARGS, 3)))
+  elseif ARGS[2] == "rm" then ppm.repo_rm(table.unpack(common.slice(ARGS, 3)))
+  elseif ARGS[2] == "update" then ppm.repo_update(table.unpack(common.slice(ARGS, 3)))
+  elseif ARGS[2] == "repo" and ARGS[3] == "update" then ppm.repo_update(table.unpack(common.slice(ARGS, 4)))
+  elseif ARGS[2] == "repo" and (#ARGS == 2 or ARGS[3] == "list") then return ppm.repo_list()
+  elseif ARGS[2] == "apply" then return ppm.apply(table.unpack(common.slice(ARGS, 3)))
+  elseif (ARGS[2] == "plugin" or ARGS[2] == "color" or ARGS[2] == "library" or ARGS[2] == "font") and ARGS[3] == "install" then ppm.install(ARGS[2], table.unpack(common.slice(ARGS, 4)))
+  elseif (ARGS[2] == "plugin" or ARGS[2] == "color" or ARGS[2] == "library" or ARGS[2] == "font") and ARGS[3] == "uninstall" then ppm.addon_uninstall(ARGS[2], table.unpack(common.slice(ARGS, 4)))
+  elseif (ARGS[2] == "plugin" or ARGS[2] == "color" or ARGS[2] == "library" or ARGS[2] == "font") and ARGS[3] == "reinstall" then ppm.addon_reinstall(ARGS[2], table.unpack(common.slice(ARGS, 4)))
+  elseif (ARGS[2] == "plugin" or ARGS[2] == "color" or ARGS[2] == "library" or ARGS[2] == "font") and (#ARGS == 2 or ARGS[3] == "list") then return ppm.addon_list(ARGS[2], ARGS[4], ARGS)
+  elseif ARGS[2] == "upgrade" then return ppm.addon_upgrade(table.unpack(common.slice(ARGS, 3)))
+  elseif ARGS[2] == "install" then ppm.install(nil, table.unpack(common.slice(ARGS, 3)))
+  elseif ARGS[2] == "unstub" then return ppm.unstub(nil, table.unpack(common.slice(ARGS, 3)))
+  elseif ARGS[2] == "uninstall" then ppm.addon_uninstall(nil, table.unpack(common.slice(ARGS, 3)))
+  elseif ARGS[2] == "reinstall" then ppm.addon_reinstall(nil, table.unpack(common.slice(ARGS, 3)))
+  elseif ARGS[2] == "describe" then ppm.describe(nil, table.unpack(common.slice(ARGS, 3)))
+  elseif ARGS[2] == "list" then return ppm.addon_list(nil, ARGS[3], ARGS)
+  elseif ARGS[2] == "pragtical" and (#ARGS == 2 or ARGS[3] == "list") then return ppm.pragtical_list(table.unpack(common.slice(ARGS, 4)))
+  elseif ARGS[2] == "pragtical" and ARGS[3] == "uninstall" then return ppm.pragtical_uninstall(table.unpack(common.slice(ARGS, 4)))
+  elseif ARGS[2] == "pragtical" and ARGS[3] == "install" then return ppm.pragtical_install(table.unpack(common.slice(ARGS, 4)))
+  elseif ARGS[2] == "pragtical" and ARGS[3] == "switch" then return ppm.pragtical_switch(table.unpack(common.slice(ARGS, 4)))
+  elseif ARGS[2] == "pragtical" and ARGS[3] == "run" then return ppm.pragtical_run(table.unpack(common.slice(ARGS, 4)))
+  elseif ARGS[2] == "pragtical" and ARGS[3] == "add" then return ppm.pragtical_add(table.unpack(common.slice(ARGS, 4)))
+  elseif ARGS[2] == "pragtical" and ARGS[3] == "rm" then return ppm.pragtical_rm(table.unpack(common.slice(ARGS, 4)))
+  elseif ARGS[2] == "pragtical" then error("unknown pragtical command: " .. ARGS[3])
+  elseif ARGS[2] == "bottle" and ARGS[3] == "add" then return ppm.bottle_add(table.unpack(common.slice(ARGS, 4)))
+  elseif ARGS[2] == "bottle" and ARGS[3] == "rm" then return ppm.bottle_rm(table.unpack(common.slice(ARGS, 4)))
+  elseif ARGS[2] == "bottle" and ARGS[3] == "run" then return ppm.bottle_run(table.unpack(common.slice(ARGS, 4)))
+  elseif ARGS[2] == "bottle" and ARGS[3] == "list" then return ppm.bottle_list(table.unpack(common.slice(ARGS, 4)))
+  elseif ARGS[2] == "bottle" and ARGS[3] == "purge" then return ppm.bottle_purge(common.slice(ARGS, 4))
+  elseif ARGS[2] == "cache" and ARGS[3] == "purge" then return ppm.cache_purge(common.slice(ARGS, 4))
+  elseif ARGS[2] == "run" then return ppm.pragtical_run(table.unpack(common.slice(ARGS, 3)))
+  elseif ARGS[2] == "switch" then return ppm.pragtical_switch(table.unpack(common.slice(ARGS, 3)))
+  elseif ARGS[2] == "purge" then ppm.purge()
   else return false end
   return true
 end
 
-function lpm.run(ARGS)
-  local result = lpm.command(ARGS)
+function ppm.run(ARGS)
+  local result = ppm.command(ARGS)
   if result == false then
     error("unknown command: " .. ARGS[2])
   elseif result == true and JSON then
@@ -2549,7 +2551,7 @@ local function error_handler(err)
   status = -1
 end
 local function lock_warning()
-  log.warning("waiting for lpm global lock to be released (only one instance of lpm can be run at once)")
+  log.warning("waiting for ppm global lock to be released (only one instance of ppm can be run at once)")
 end
 
 
@@ -2573,20 +2575,20 @@ xpcall(function()
   end
   if ARGS["help"] or #ARGS == 1 or ARGS[2] == "help" then
     io.stdout:write([[
-Usage: lpm COMMAND [...ARGUMENTS] [--json] [--userdir=directory]
+Usage: ppm COMMAND [...ARGUMENTS] [--json] [--userdir=directory]
   [--cachedir=directory] [--quiet] [--version] [--help] [--remotes]
   [--ssl-certs=directory/file] [--force] [--arch=]] .. DEFAULT_ARCH .. [[]
   [--assume-yes] [--no-install-optional] [--verbose] [--mod-version=3]
   [--datadir=directory] [--binary=path] [--symlink] [--post] [--reinstall]
   [--no-color] [--table=...] [--plugin=file/url] [--tmpdir=directory] [--configdir=directory]
 
-LPM is a package manager for `lite-xl`, written in C (and packed-in lua).
+PPM is a package manager for `pragtical`, written in C (and packed-in lua).
 
 It's designed to install packages from our central github repository (and
-affiliated repositories), directly into your lite-xl user directory. It can
-be called independently, or from the lite-xl `plugin_manager` addon.
+affiliated repositories), directly into your pragtical user directory. It can
+be called independently, or from the pragtical `plugin_manager` addon.
 
-LPM will always use
+PPM will always use
 ]] .. DEFAULT_REPO_URL .. [[
 
 as its base repository, if none are present, and the cache directory
@@ -2594,7 +2596,7 @@ doesn't exist, but others can be added, and this base one can be removed.
 
 It has the following commands:
 
-  lpm init [repo 1] [repo 2] [...]         Implicitly called before all commands
+  ppm init [repo 1] [repo 2] [...]         Implicitly called before all commands
                                            if necessary, but can be called
                                            independently to save time later, or
                                            to set things up differently.
@@ -2608,78 +2610,78 @@ It has the following commands:
                                            If "none" is specified, initializes
                                            an empty repository list.
 
-  lpm repo list                            List all extant repos.
-  lpm [repo] add <repository remote>       Add a source repository.
+  ppm repo list                            List all extant repos.
+  ppm [repo] add <repository remote>       Add a source repository.
     [...<repository remote>]
-  lpm [repo] rm <repository remote>        Remove a source repository.
+  ppm [repo] rm <repository remote>        Remove a source repository.
     [...<repository remote>]
-  lpm [repo] update [<repository remote>]  Update all/the specified repos.
+  ppm [repo] update [<repository remote>]  Update all/the specified repos.
     [...<repository remote>]
-  lpm [plugin|library|color] install       Install specific addons.
+  ppm [plugin|library|color] install       Install specific addons.
     <addon id>[:<version>]                 If installed, upgrades.
     [...<addon id>:<version>]
-  lpm [plugin|library|color] uninstall     Uninstall the specific addon.
+  ppm [plugin|library|color] uninstall     Uninstall the specific addon.
     <addon id> [...<addon id>]
-  lpm [plugin|library|color] reinstall     Uninstall and installs the specific addon.
+  ppm [plugin|library|color] reinstall     Uninstall and installs the specific addon.
    <addon id> [...<addon id>]
 
-  lpm [plugin|library|color] list          List all/associated addons.
+  ppm [plugin|library|color] list          List all/associated addons.
    <remote> [...<remote>]
 
-  lpm upgrade                              Upgrades all installed addons
+  ppm upgrade                              Upgrades all installed addons
                                            to new version if applicable.
-  lpm self-upgrade [version]               Upgrades lpm to a new version,
+  ppm self-upgrade [version]               Upgrades ppm to a new version,
                                            if applicable. Defaults to
                                            latest.
-  lpm [lite-xl] install <version>          Installs lite-xl. Infers the
+  ppm [pragtical] install <version>          Installs pragtical. Infers the
     [binary] [datadir]                     paths on your system if not
                                            supplied. Automatically
                                            switches to be your system default
                                            if path auto inferred.
-  lpm lite-xl add <version> <path>         Adds a local version of lite-xl to
+  ppm pragtical add <version> <path>         Adds a local version of pragtical to
                                            the managed list, allowing it to be
                                            easily bottled.
-  lpm lite-xl rm <path>                    Removes a local version of lite-xl
+  ppm pragtical rm <path>                    Removes a local version of pragtical
                                            from the managed list.
-  lpm [lite-xl] switch <version> [<path>]  Sets the active version of lite-xl
+  ppm [pragtical] switch <version> [<path>]  Sets the active version of pragtical
                                            to be the specified version. Auto-detects
-                                           current install of lite-xl; if none found
+                                           current install of pragtical; if none found
                                            path can be specified.
-  lpm lite-xl list [name pattern]          Lists all installed versions of
-     [...filters]                          lite-xl. Can specify the flags listed
+  ppm pragtical list [name pattern]          Lists all installed versions of
+     [...filters]                          pragtical. Can specify the flags listed
                                            in the filtering section.
-  lpm run <version> [...addons]            Sets up a "bottle" to run the specified
-                                           lite version, with the specified addons
+  ppm run <version> [...addons]            Sets up a "bottle" to run the specified
+                                           pragtical version, with the specified addons
                                            and then opens it.
-  lpm describe [bottle]                    Describes the bottle specified in the form
+  ppm describe [bottle]                    Describes the bottle specified in the form
                                            of a list of commands, that allow someone
                                            else to run your configuration.
 
-  lpm purge                                Completely purge all state for LPM.
-  lpm bottle purge                         Purges all bottles.
-  lpm -                                    Read these commands from stdin in
+  ppm purge                                Completely purge all state for PPM.
+  ppm bottle purge                         Purges all bottles.
+  ppm -                                    Read these commands from stdin in
                                            an interactive print-eval loop.
-  lpm help                                 Displays this help text.
+  ppm help                                 Displays this help text.
 
 
 Flags have the following effects:
 
   --json                   Performs all communication in JSON.
-  --userdir=directory      Sets the lite-xl userdir manually.
-                           If omitted, uses the normal lite-xl logic.
+  --userdir=directory      Sets the pragtical userdir manually.
+                           If omitted, uses the normal pragtical logic.
   --cachedir=directory     Sets the directory to store all repositories.
-  --configdir=directory    Sets the directory where we store lpm configuration data.
+  --configdir=directory    Sets the directory where we store ppm configuration data.
   --tmpdir=directory       During install, sets the staging area.
   --datadir=directory      Sets the data directory where core addons are located
-                           for the system lite-xl.
+                           for the system pragtical.
   --bottledir=directory    Sets the directory where bottles are stored.
-  --binary=path            Sets the lite-xl binary path for the system lite-xl.
+  --binary=path            Sets the pragtical binary path for the system pragtical.
   --verbose                Spits out more information, including intermediate
                             steps to install and whatnot.
   --quiet                  Outputs nothing but explicit responses.
-  --mod-version=version    Sets the mod version of lite-xl to install addons.
+  --mod-version=version    Sets the mod version of pragtical to install addons.
                            Can be set to "any", which will retrieve the latest
-                           specified, and will add 
+                           specified, and will add
                            `config.skip_plugins_version = true` to a bottle.
   --version                Returns version information.
   --help                   Displays this help text.
@@ -2713,13 +2715,13 @@ Flags have the following effects:
                            repositories, simply act as if the only repositories
                            are those specified in this option.
   --ephemeral              Designates a bottle as 'ephemeral', meaning that it
-                           is fully cleaned up when lpm exits. Multiple ephemeral
+                           is fully cleaned up when ppm exits. Multiple ephemeral
                            bottles will also execute independently of one another
                            even if they share plugins.
-  --plugin                 Loads the specified plugin as part of lpm. Used
-                           for customizing lpm for various tasks. Can be
+  --plugin                 Loads the specified plugin as part of ppm. Used
+                           for customizing ppm for various tasks. Can be
                            specified as a remote URL. By default, will always
-                           load all the plugins specified in $HOME/.config/lpm/plugins.
+                           load all the plugins specified in $HOME/.config/ppm/plugins.
   --update                 Forces an update of all repositories involved in the command
                            you're running.
 
@@ -2758,19 +2760,19 @@ in any circumstance unless explicitly supplied.
 There exist also other debug commands that are potentially useful, but are
 not commonly used publically.
 
-  lpm test <test file>               Runs the specified test suite.
-  lpm exec <file|string>             Runs the specified lua file/string with the internal
+  ppm test <test file>               Runs the specified test suite.
+  ppm exec <file|string>             Runs the specified lua file/string with the internal
                                      interpreter.
-  lpm download <url> [target]        Downloads the specified URL to stdout,
+  ppm download <url> [target]        Downloads the specified URL to stdout,
                                      or to the specified target file.
-  lpm hash <file>                    Returns the sha256sum of the file.
-  lpm update-checksums <manifest>    Pulls all remote files, computes their
+  ppm hash <file>                    Returns the sha256sum of the file.
+  ppm update-checksums <manifest>    Pulls all remote files, computes their
                                      checksums, and updates them in the file.
-  lpm extract <file.[tar.gz|zip]>    Extracts the specified archive at
+  ppm extract <file.[tar.gz|zip]>    Extracts the specified archive at
     [target]                         target, or the current working directory.
 ]]
     )
-    if LPM_RUN_FROM_GUI then
+    if PPM_RUN_FROM_GUI then
       io.stderr:write(colorize("\n\nYou can close this window by pressing Enter.", "cyan"))
       io.stdin:read("*l")
     end
@@ -2779,9 +2781,9 @@ not commonly used publically.
 
 
   VERBOSE = ARGS["verbose"] or false
-  JSON = ARGS["json"] or os.getenv("LPM_JSON")
-  QUIET = ARGS["quiet"] or os.getenv("LPM_QUIET")
-  EPHEMERAL = ARGS["ephemeral"] or os.getenv("LPM_EPHEMERAL")
+  JSON = ARGS["json"] or os.getenv("PPM_JSON")
+  QUIET = ARGS["quiet"] or os.getenv("PPM_QUIET")
+  EPHEMERAL = ARGS["ephemeral"] or os.getenv("PPM_EPHEMERAL")
   local arg = ARGS["table"] or ARGS["raw"]
   if arg then
     local offset,s,e,i = 1, 1, 0, 1
@@ -2829,15 +2831,15 @@ not commonly used publically.
   NO_INSTALL_OPTIONAL = ARGS["no-install-optional"]
   ARCH = ARGS["arch"] or { DEFAULT_ARCH }
   ASSUME_YES = ARGS["assume-yes"] or FORCE
-  MOD_VERSION = ARGS["mod-version"] or os.getenv("LPM_MODVERSION")
+  MOD_VERSION = ARGS["mod-version"] or os.getenv("PPM_MODVERSION")
   assert(not MOD_VERSION or MOD_VERSION == "any" or MOD_VERSION:find("^%d+%.?%d*%.?%d*$"), "--mod-version must be either 'any' or a version number.")
   AUTO_PULL_REMOTES = ARGS["remotes"]
   HOME = (os.getenv("USERPROFILE") or os.getenv("HOME")):gsub(PATHSEP .. "$", "")
-  USERDIR = common.normalize_path(ARGS["userdir"]) or os.getenv("LITE_USERDIR") or os.getenv("LPM_USERDIR") or ((os.getenv("XDG_CONFIG_HOME") or (HOME .. PATHSEP .. '.config')) .. PATHSEP .. "lite-xl")
-  CACHEDIR = common.normalize_path(ARGS["cachedir"]) or os.getenv("LPM_CACHE") or ((os.getenv("XDG_CACHE_HOME") or (HOME .. PATHSEP .. ".cache")) .. PATHSEP .. "lpm")
-  CONFIGDIR = common.normalize_path(ARGS["configdir"]) or os.getenv("LPM_CONFIG") or ((os.getenv("XDG_CONFIG_HOME") or (HOME .. PATHSEP .. ".config")) .. PATHSEP .. "lpm")
-  TMPDIR = common.normalize_path(ARGS["tmpdir"]) or os.getenv("LPM_TMPDIR") or (CACHEDIR .. PATHSEP .. "tmp")
-  BOTTLEDIR = common.normalize_path(ARGS["bottledir"]) or os.getenv("LPM_BOTTLEDIR") or ((os.getenv("XDG_STATE_HOME") or (HOME .. PATHSEP .. ".local" .. PATHSEP  .. "state")) .. PATHSEP .. "lpm" .. PATHSEP .. "bottles")
+  USERDIR = common.normalize_path(ARGS["userdir"]) or os.getenv("PRAGTICAL_USERDIR") or os.getenv("PPM_USERDIR") or ((os.getenv("XDG_CONFIG_HOME") or (HOME .. PATHSEP .. '.config')) .. PATHSEP .. "pragtical")
+  CACHEDIR = common.normalize_path(ARGS["cachedir"]) or os.getenv("PPM_CACHE") or ((os.getenv("XDG_CACHE_HOME") or (HOME .. PATHSEP .. ".cache")) .. PATHSEP .. "ppm")
+  CONFIGDIR = common.normalize_path(ARGS["configdir"]) or os.getenv("PPM_CONFIG") or ((os.getenv("XDG_CONFIG_HOME") or (HOME .. PATHSEP .. ".config")) .. PATHSEP .. "ppm")
+  TMPDIR = common.normalize_path(ARGS["tmpdir"]) or os.getenv("PPM_TMPDIR") or (CACHEDIR .. PATHSEP .. "tmp")
+  BOTTLEDIR = common.normalize_path(ARGS["bottledir"]) or os.getenv("PPM_BOTTLEDIR") or ((os.getenv("XDG_STATE_HOME") or (HOME .. PATHSEP .. ".local" .. PATHSEP  .. "state")) .. PATHSEP .. "ppm" .. PATHSEP .. "bottles")
   if ARGS["trace"] then system.trace(true) end
 
   MASK = {}
@@ -2899,8 +2901,8 @@ not commonly used publically.
 
 
   repositories = {}
-  if ARGS[2] == "purge" then return lpm.purge() end
-  local ssl_certs = ARGS["ssl-certs"] or os.getenv("LPM_CERTS") or os.getenv("SSL_CERT_DIR") or os.getenv("SSL_CERT_FILE")
+  if ARGS[2] == "purge" then return ppm.purge() end
+  local ssl_certs = ARGS["ssl-certs"] or os.getenv("PPM_CERTS") or os.getenv("SSL_CERT_DIR") or os.getenv("SSL_CERT_FILE")
   if not NO_NETWORK then
     if ssl_certs and ssl_certs ~= "system" and ssl_certs ~= "mozilla" then
       if ssl_certs == "noverify" then
@@ -2972,7 +2974,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         if PLATFORM == "windows" then
           system.certs("system", cert_path)
           -- windows is so fucking awful
-          -- we check to see if we support the main site that lpm is hoted on, github.com.
+          -- we check to see if we support the main site that ppm is hoted on, github.com.
           -- if we *cannot* access this site due to ssl error, we switch to mozilla.
           local status, err = pcall(common.get, "https://github.com")
           if not status and err and err:lower():find("verification failed") then
@@ -2991,14 +2993,14 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
               break
             end
           end
-          if not has_certs then 
-            log.warning("can't autodetect your system's SSL certificates; please specify specify a certificate bundle or certificate directory with --ssl-certs; defaulting to pulling from https://curl.se/ca/cacert.pem") 
+          if not has_certs then
+            log.warning("can't autodetect your system's SSL certificates; please specify specify a certificate bundle or certificate directory with --ssl-certs; defaulting to pulling from https://curl.se/ca/cacert.pem")
             ssl_certs = "mozilla"
           end
         end
       end
       if ssl_certs == "mozilla" then
-        if not cert_contents:find(lets_encrypt_root_certificate, 1, true) or #cert_contents < 10000 then 
+        if not cert_contents:find(lets_encrypt_root_certificate, 1, true) or #cert_contents < 10000 then
           common.write(cert_path, cert_contents .. lets_encrypt_root_certificate)
           system.certs("file", cert_path)
           common.write(cert_path, lets_encrypt_root_certificate .. "\n" .. common.get("https://curl.se/ca/cacert.pem"))
@@ -3009,25 +3011,25 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
     end
   end
 
-  local lpm_plugins_path = HOME .. PATHSEP .. ".config" .. PATHSEP .. "lpm" .. PATHSEP .. "plugins"
-  local lpm_plugins = {}
-  if system.stat(lpm_plugins_path) then
-    local files = system.ls(lpm_plugins_path)
-    lpm_plugins = common.concat(
-      common.map(common.grep(files, function(path) return path:find("%.lua$") end), function(path) return lpm_plugins_path .. PATHSEP .. path end),
-      common.grep(common.map(common.grep(files, function(path) return not path:find("%.lua$") end), function(path) return lpm_plugins_path .. PATHSEP .. path .. PATHSEP .. "init.lua" end), function(path) return system.stat(path) end)
+  local ppm_plugins_path = HOME .. PATHSEP .. ".config" .. PATHSEP .. "ppm" .. PATHSEP .. "plugins"
+  local ppm_plugins = {}
+  if system.stat(ppm_plugins_path) then
+    local files = system.ls(ppm_plugins_path)
+    ppm_plugins = common.concat(
+      common.map(common.grep(files, function(path) return path:find("%.lua$") end), function(path) return ppm_plugins_path .. PATHSEP .. path end),
+      common.grep(common.map(common.grep(files, function(path) return not path:find("%.lua$") end), function(path) return ppm_plugins_path .. PATHSEP .. path .. PATHSEP .. "init.lua" end), function(path) return system.stat(path) end)
     )
   end
   local env = setmetatable({}, { __index = _G, __newindex = function(t, k, v) _G[k] = v end })
 
-  for i,v in ipairs(common.concat(ARGS["plugin"] or {}, { common.split(",", os.getenv("LPM_PLUGINS") or "") }, lpm_plugins)) do
+  for i,v in ipairs(common.concat(ARGS["plugin"] or {}, { common.split(",", os.getenv("PPM_PLUGINS") or "") }, ppm_plugins)) do
     if v ~= "" then
       local contents = v:find("^https?://") and common.get(v) or common.read(v)
       local func, err = load(contents, v, "bt", env)
       if func then
         func()
       else
-        log.warning("unable to load lpm plugin " .. v .. ": " .. err)
+        log.warning("unable to load ppm plugin " .. v .. ": " .. err)
       end
       if VERBOSE then log.action("Loaded plugin " .. v) end
     end
@@ -3075,7 +3077,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
     os.exit(0)
   end
   if ARGS[2] == "update-checksums" then
-    if #ARGS == 2 then error("usage: lpm update-checksums manifest.json") end
+    if #ARGS == 2 then error("usage: ppm update-checksums manifest.json") end
     local contents = common.read(ARGS[3])
     local m = json.decode(contents)
     local computed = {}
@@ -3086,7 +3088,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         if i > 3 then filter[arg] = true end
       end
     end
-    for _, section in ipairs(common.concat(m.addons or {}, m["lite-xls"] or {})) do
+    for _, section in ipairs(common.concat(m.addons or {}, m["pragticals"] or {})) do
       for _, file in ipairs(common.concat({ section }, section.files or {})) do
         if (not filter or (section.id and filter[section.id])) and file.url and file.checksum ~= "SKIP" and type(file.checksum) == "string" then
           log.action("Computing checksum for " .. (section.id or section.version) .. " (" .. file.url .. ")...")
@@ -3109,22 +3111,22 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
     os.exit(0)
   end
   if ARGS[2] == "self-upgrade" then
-    lpm.self_upgrade(table.unpack(common.slice(ARGS, 3)))
+    ppm.self_upgrade(table.unpack(common.slice(ARGS, 3)))
     os.exit(0)
   end
 
   if not system.stat(USERDIR) then common.mkdirp(USERDIR) end
   if not system.stat(CACHEDIR) then common.mkdirp(CACHEDIR) end
   if not system.stat(CONFIGDIR) then common.mkdirp(CONFIGDIR) end
-  
+
   if engage_locks(function()
-    lpm.setup()
+    ppm.setup()
   end, error_handler, lock_warning) then return end
 
   if ARGS[2] ~= '-' then
     local res
     engage_locks(function()
-      res = lpm.run(ARGS)
+      res = ppm.run(ARGS)
     end, error_handler, lock_warning)
     if res then
       res()
@@ -3144,7 +3146,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
       xpcall(function()
         local res
         engage_locks(function()
-          res = lpm.run(args)
+          res = ppm.run(args)
         end, error_handler, lock_warning)
         if res then
           if type(res) == 'function' then

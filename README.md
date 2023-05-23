@@ -1,32 +1,34 @@
-# Lite XL Plugin Manager (lpm)
+**Warning:** This repository could be regularly rebased
+
+# Pragtical Plugin Manager (ppm)
 
 ![image](https://user-images.githubusercontent.com/1034518/216748882-3ae8c8d4-a767-4d97-acc4-c1cde7e3e331.png)
 
 A standalone binary that provides an easy way of installing, and uninstalling
-plugins from lite-xl, as well as different version of lite-xl.
+plugins from pragtical, as well as different version of pragtical.
 
 Can be used by a package manager plugin that works from inside the editor
 and calls this binary.
 
-Also contains a `plugin_manager.lua` plugin to integrate the binary with lite-xl in
+Also contains a `plugin_manager.lua` plugin to integrate the binary with pragtical in
 the form of an easy-to-use GUI.
 
-By default in releases, `lpm` will automatically consume the `manifest.json`
+By default in releases, `ppm` will automatically consume the `manifest.json`
 in the `latest` branch of this repository, which corresponds to the most
 recent versioned release.
 
-As of Lite XL version 3, `lpm`, along with the `plugin_manager` and `welcome`
-plugins will be bundled with all official releases.
+Currently, `ppm`, along with the `plugin_manager` plugin is bundled with
+all official Pragtical releases.
 
 Conforms to [SCPS3](https://github.com/adamharrison/straightforward-c-project-standard#SCPS3).
 
 ## Status
 
-`lpm` 1.0 has been just released, and so may still contain bugs, but is generally feature-complete.
+`ppm` 1.0 has been just released, and so may still contain bugs, but is generally feature-complete.
 
 ## Specification
 
-For details about the `manifest.json` files that `lpm` consumes,
+For details about the `manifest.json` files that `ppm` consumes,
 [see here](SPEC.md).
 
 ## Installing
@@ -34,32 +36,32 @@ For details about the `manifest.json` files that `lpm` consumes,
 ### Windows
 
 On Windows, the best way to start, especially if you're used to a visual interface is to simply pull
-`lpm`, and use it to install `plugin_manager`, which will give you a graphical plugin manager inside
-Lite XL that can be accessed with the `Plugin Manager: Show` command (`ctrl+shift+p`).
+`ppm`, and use it to install `plugin_manager`, which will give you a graphical plugin manager inside
+Pragtical that can be accessed with the `Plugin Manager: Show` command (`ctrl+shift+p`).
 
 To get started, open a PowerShell terminal, and run the following:
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/lite-xl/lite-xl-plugin-manager/releases/download/latest/lpm.x86_64-windows.exe" -OutFile "lpm.exe"
-.\lpm.exe install plugin_manager --assume-yes
-Remove-Item lpm.exe
+Invoke-WebRequest -Uri "https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.x86_64-windows.exe" -OutFile "ppm.exe"
+.\ppm.exe install plugin_manager --assume-yes
+Remove-Item ppm.exe
 ```
 
-This should install `lpm` and install the GUI. If you already had Lite XL open, please restart it (`ctrl+alt+r`).
+This should install `ppm` and install the GUI. If you already had Pragtical open, please restart it (`ctrl+alt+r`).
 
 ### Linux + Mac
 
-The fastest way to get started with lpm is to simply pull a release.
+The fastest way to get started with ppm is to simply pull a release.
 
 ```sh
-wget https://github.com/lite-xl/lite-xl-plugin-manager/releases/download/latest/lpm.x86_64-linux -O lpm && chmod +x lpm
+wget https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.x86_64-linux -O ppm && chmod +x ppm
 ```
 
-If you want to get the GUI version installed with lite-xl, you can tell `lpm` to install `plugin_manager`, which will allow
-you to access `Plugin Manager: Show` in the command palette in `lite-xl`.
+If you want to get the GUI version installed with pragtical, you can tell `ppm` to install `plugin_manager`, which will allow
+you to access `Plugin Manager: Show` in the command palette in `pragtical`.
 
 ```sh
-./lpm install plugin_manager --assume-yes
+./ppm install plugin_manager --assume-yes
 ```
 
 ### Compilation
@@ -68,46 +70,46 @@ If you have a C compiler, and `git`, and want to compile from scratch,
 you can do:
 
 ```sh
-git clone https://github.com/lite-xl/lite-xl-plugin-manager.git \
-  --shallow-submodules --recurse-submodules && cd lite-xl-plugin-manager &&\
-  ./build.sh -DLPM_STATIC && ./lpm
+git clone https://github.com/pragtical/plugin-manager.git \
+  --shallow-submodules --recurse-submodules && cd plugin-manager &&\
+  ./build.sh -DPPM_STATIC && ./ppm
 ````
 
 If you want to build it quickly, and have the right modules installed, you can
 do:
 
 ```sh
-./build.sh -lgit2 -lzip -llua -lm -lmbedtls -lmbedx509 -lmbedcrypto -lz -DLPM_STATIC
+./build.sh -lgit2 -lzip -llua -lm -lmbedtls -lmbedx509 -lmbedcrypto -lz -DPPM_STATIC
 ```
 
 OR
 
 ```sh
-gcc src/lpm.c lib/microtar/src/microtar.c -Ilib/microtar/src -lz -lgit2 \
-  -lzip -llua -lm -lmbedtls -lmbedx509 -lmbedcrypto -o lpm
+gcc src/ppm.c lib/microtar/src/microtar.c -Ilib/microtar/src -lz -lgit2 \
+  -lzip -llua -lm -lmbedtls -lmbedx509 -lmbedcrypto -o ppm
 ```
 
 CI is enabled on this repository, so you can grab Windows and Linux builds from the
-`continuous` [release page](https://github.com/lite-xl/lite-xl-plugin-manager/releases/tag/continuous),
-which is a nightly, or the `latest` [release page](https://github.com/lite-xl/lite-xl-plugin-manager/releases/tag/latest),
+`continuous` [release page](https://github.com/pragtical/plugin-manager/releases/tag/continuous),
+which is a nightly, or the `latest` [release page](https://github.com/pragtical/plugin-manager/releases/tag/latest),
 which holds the most recent released version.
 
 There are also tagged releases, for specified versions.
 
-You can get a feel for how to use `lpm` by typing `./lpm --help`.
+You can get a feel for how to use `ppm` by typing `./ppm --help`.
 
-You can also use `scoop` to grab `lpm`:
+You can also use `scoop` to grab `ppm`:
 
 ```
-scoop install https://raw.githubusercontent.com/lite-xl/lite-xl-plugin-manager/refs/heads/master/lite-xl-plugin-manager.json
+scoop install https://raw.githubusercontent.com/pragtical/plugin-manager/refs/heads/master/pragtical-plugin-manager.json
 ```
 
-Please note, that _meson_ is _not_ necessarily the best way to compile `lpm`. If you have troubles with it, please do consider using the build.sh script.
+Please note, that _meson_ is _not_ necessarily the best way to compile `ppm`. If you have troubles with it, please do consider using the build.sh script.
 
 ## Supporting Libraries / Dependencies
 
 As seen in the `lib` folder, the following external libraries are used to
-build `lpm` as git submodules:
+build `ppm` as git submodules:
 
 * `lua` (core program written in)
 * `mbedtls` (https/SSL support)
@@ -116,12 +118,12 @@ build `lpm` as git submodules:
 * `libzip` (for unpacking .zip files)
 * `libmicrotar` (for unpacking .tar.gz files)
 
-To build, `lpm` only requires a C compiler. To run the underlying build process
+To build, `ppm` only requires a C compiler. To run the underlying build process
 for `mbedtls` and `libgit2`, `cmake` is also required.
 
 ## Supported Platforms
 
-`lpm` should work on all platforms `lite-xl` works on; but releases are offered for the following:
+`ppm` should work on all platforms `pragtical` works on; but releases are offered for the following:
 
 * Windows x86_64
 * Linux x86_64
@@ -139,23 +141,23 @@ Experimental support (i.e. doesn't work) exists for the following platforms:
 
 ## Use in CI
 
-To make pre-fab lite builds, you can easily use `lpm` in CI. If you had a linux build container, you could do something like:
+To make pre-fab pragtical builds, you can easily use `ppm` in CI. If you had a linux build container, you could do something like:
 
 ```sh
-curl https://github.com/adamharrison/lite-xl-plugin-manager/releases/download/v0.1/lpm.x86_64-linux > lpm
-export LITE_USERDIR=lite-xl/data && export LPM_CACHE=/tmp/cache
-./lpm add https://github.com/adamharrison/lite-xl-plugin-manager && ./lpm install plugin_manager lsp
+curl https://github.com/pragtical/plugin-manager/releases/download/v0.1/ppm.x86_64-linux > ppm
+export PRAGTICAL_USERDIR=pragtical/data && export PPM_CACHE=/tmp/cache
+./ppm add https://github.com/pragtical/plugin-manager && ./ppm install plugin_manager lsp
 ```
 
 ## Usage
 
 ```sh
-lpm install aligncarets
-lpm uninstall aligncarets
+ppm install aligncarets
+ppm uninstall aligncarets
 ```
 
 ```sh
-lpm --help
+ppm --help
 ```
 
 ## Building & Running
@@ -163,7 +165,7 @@ lpm --help
 ### Linux & MacOS & Windows MSYS
 
 ```
-./build.sh clean && ./build.sh -DLPM_STATIC && ./lpm
+./build.sh clean && ./build.sh -DPPM_STATIC && ./ppm
 ```
 
 ### Linux -> Windows
@@ -171,12 +173,12 @@ lpm --help
 ```
 ./build.sh clean && HOSTCC=gcc CC=x86_64-w64-mingw32-gcc AR=x86_64-w64-mingw32-gcc-ar WINDRES=x86_64-w64-mingw32-windres \
 CMAKE_DEFAULT_FLAGS="-DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER\ -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=NEVER -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=NEVER -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_INCLUDE_PATH=/usr/share/mingw-w64/include"\
-  GIT2_CONFIGURE="-DDLLTOOL=x86_64-w64-mingw32-dlltool" ./build.sh -DLPM_STATIC -DLPM_VERSION='"'$VERSION-x86_64-windows-`git rev-parse --short HEAD`'"'
+  GIT2_CONFIGURE="-DDLLTOOL=x86_64-w64-mingw32-dlltool" ./build.sh -DPPM_STATIC -DPPM_VERSION='"'$VERSION-x86_64-windows-`git rev-parse --short HEAD`'"'
 ```
 
 ## Tests
 
-To run the test suite, you can use `lpm` to execute the test by doing `./lpm test t/run.lua`. use `FAST=1 ./lpm test t/run.lua` to avoid the costs of tearing down and building up suites each time.
+To run the test suite, you can use `ppm` to execute the test by doing `./ppm test t/run.lua`. use `FAST=1 ./ppm test t/run.lua` to avoid the costs of tearing down and building up suites each time.
 
 ## Extra Features
 
@@ -193,5 +195,5 @@ An array of files to be marked as executable (after extraction, if applicable).
 If you find a bug, please create an issue with the following information:
 
 * Your operating system.
-* The commit or version of LPM you're using (`lpm --version` for releases).
-* The exact steps to reproduce in LPM invocations, if possible from a fresh LPM install (targeting an empty folder with `--userdir`).
+* The commit or version of PPM you're using (`ppm --version` for releases).
+* The exact steps to reproduce in PPM invocations, if possible from a fresh PPM install (targeting an empty folder with `--userdir`).

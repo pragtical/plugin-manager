@@ -9,7 +9,7 @@
   #include <wincrypt.h>
   #include <process.h>
 #else
-  #ifndef LPM_NO_THRAEDS
+  #ifndef PPM_NO_THRAEDS
     #include <pthread.h>
   #endif
   #include <sys/ioctl.h>
@@ -33,11 +33,11 @@
 #include <lualib.h>
 #include <lauxlib.h>
 
-#ifndef LPM_NO_GIT
+#ifndef PPM_NO_GIT
   #include <git2.h>
 #endif
 
-#ifndef LPM_NO_NETWORK
+#ifndef PPM_NO_NETWORK
   #include <mbedtls/x509.h>
   #include <mbedtls/entropy.h>
   #include <mbedtls/ctr_drbg.h>
@@ -53,7 +53,7 @@
   #endif
   #ifdef _WIN32
     #include <winsock2.h>
-  #else 
+  #else
     #include <netdb.h>
     #include <arpa/inet.h>
     #include <sys/socket.h>
@@ -82,7 +82,7 @@ typedef struct {
   #else
     pthread_t thread;
   #endif
-} lpm_thread_t;
+} ppm_thread_t;
 
 typedef struct {
   #if _WIN32
@@ -90,11 +90,11 @@ typedef struct {
   #else
     pthread_mutex_t mutex;
   #endif
-} lpm_mutex_t;
+} ppm_mutex_t;
 
-static lpm_mutex_t* new_mutex() {
-  lpm_mutex_t* mutex = malloc(sizeof(lpm_mutex_t));
-  #ifndef LPM_NO_THREADS
+static ppm_mutex_t* new_mutex() {
+  ppm_mutex_t* mutex = malloc(sizeof(ppm_mutex_t));
+  #ifndef PPM_NO_THREADS
     #if _WIN32
       InitializeCriticalSection(&mutex->mutex);
     #else
@@ -104,8 +104,8 @@ static lpm_mutex_t* new_mutex() {
   return mutex;
 }
 
-static void free_mutex(lpm_mutex_t* mutex) {
-  #ifndef LPM_NO_THREADS
+static void free_mutex(ppm_mutex_t* mutex) {
+  #ifndef PPM_NO_THREADS
     #if _WIN32
       DeleteCriticalSection(&mutex->mutex);
     #else
@@ -115,8 +115,8 @@ static void free_mutex(lpm_mutex_t* mutex) {
   free(mutex);
 }
 
-static void lock_mutex(lpm_mutex_t* mutex) {
-  #ifndef LPM_NO_THREADS
+static void lock_mutex(ppm_mutex_t* mutex) {
+  #ifndef PPM_NO_THREADS
     #if _WIN32
       EnterCriticalSection(&mutex->mutex);
     #else
@@ -125,8 +125,8 @@ static void lock_mutex(lpm_mutex_t* mutex) {
   #endif
 }
 
-static void unlock_mutex(lpm_mutex_t* mutex) {
-  #ifndef LPM_NO_THREADS
+static void unlock_mutex(ppm_mutex_t* mutex) {
+  #ifndef PPM_NO_THREADS
     #if _WIN32
       LeaveCriticalSection(&mutex->mutex);
     #else
@@ -138,15 +138,15 @@ static void unlock_mutex(lpm_mutex_t* mutex) {
 
 #if _WIN32
 static WINAPI unsigned int windows_thread_callback(void* data) {
-  lpm_thread_t* thread = data;
+  ppm_thread_t* thread = data;
   thread->data = thread->func(thread->data);
   return 0;
 }
 #endif
 
-static lpm_thread_t* create_thread(void* (*func)(void*), void* data) {
-  lpm_thread_t* thread = malloc(sizeof(lpm_thread_t));
-  #ifndef LPM_NO_THREADS
+static ppm_thread_t* create_thread(void* (*func)(void*), void* data) {
+  ppm_thread_t* thread = malloc(sizeof(ppm_thread_t));
+  #ifndef PPM_NO_THREADS
     #if _WIN32
       thread->func = func;
       thread->data = data;
@@ -160,11 +160,11 @@ static lpm_thread_t* create_thread(void* (*func)(void*), void* data) {
   return thread;
 }
 
-static void* join_thread(lpm_thread_t* thread) {
+static void* join_thread(ppm_thread_t* thread) {
   if (!thread)
     return NULL;
   void* retval = NULL;
-  #ifndef LPM_NO_THREADS
+  #ifndef PPM_NO_THREADS
     #if _WIN32
       WaitForSingleObject(thread->thread, INFINITE);
       CloseHandle(thread->thread);
@@ -221,7 +221,7 @@ static const void luaL_win32_push_error(lua_State* L, DWORD error_id) {
   wchar_t message_buffer[2048];
   size_t size = FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                                NULL, error_id, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), message_buffer, 2048, NULL);
-  lua_toutf8(L, message_buffer); 
+  lua_toutf8(L, message_buffer);
 }
 
 static const int luaL_win32_error(lua_State* L, DWORD error_id, const char* message, ...) {
@@ -390,7 +390,7 @@ static void sha256_final(SHA256_CTX *ctx, unsigned char* hash) {
 		hash[i + 28] = (ctx->state[7] >> (24 - i * 8)) & 0x000000ff;
 	}
 }
-static int lpm_hash(lua_State* L) {
+static int ppm_hash(lua_State* L) {
   size_t len;
   const char* data = luaL_checklstring(L, 1, &len);
   const char* type = luaL_optstring(L, 2, "string");
@@ -418,7 +418,7 @@ static int lpm_hash(lua_State* L) {
   return 1;
 }
 
-static int lpm_tcflush(lua_State* L) {
+static int ppm_tcflush(lua_State* L) {
   int stream = luaL_checkinteger(L, 1);
   #ifndef _WIN32
     if (isatty(stream))
@@ -427,7 +427,7 @@ static int lpm_tcflush(lua_State* L) {
   return 0;
 }
 
-static int lpm_tcwidth(lua_State* L) {
+static int ppm_tcwidth(lua_State* L) {
   int stream = luaL_checkinteger(L, 1);
   #ifndef _WIN32
     if (isatty(stream)) {
@@ -447,7 +447,7 @@ static int lpm_tcwidth(lua_State* L) {
   return 0;
 }
 
-static int lpm_symlink(lua_State* L) {
+static int ppm_symlink(lua_State* L) {
   #ifndef _WIN32
     if (symlink(luaL_checkstring(L, 1), luaL_checkstring(L, 2)))
       return luaL_error(L, "can't create symlink %s: %s", luaL_checkstring(L, 2), strerror(errno));
@@ -461,7 +461,7 @@ static int lpm_symlink(lua_State* L) {
   return 0;
 }
 
-static int lpm_chmod(lua_State* L) {
+static int ppm_chmod(lua_State* L) {
   #ifdef _WIN32
     if (_wchmod(lua_toutf16(L, luaL_checkstring(L, 1)), luaL_checkinteger(L, 2)))
   #else
@@ -471,7 +471,7 @@ static int lpm_chmod(lua_State* L) {
   return 0;
 }
 
-static int lpm_ls(lua_State *L) {
+static int ppm_ls(lua_State *L) {
   const char *path = luaL_checkstring(L, 1);
   int i = 1;
 #ifdef _WIN32
@@ -514,7 +514,7 @@ static int lpm_ls(lua_State *L) {
   return 1;
 }
 
-static int lpm_rmdir(lua_State *L) {
+static int ppm_rmdir(lua_State *L) {
   const char *path = luaL_checkstring(L, 1);
 #ifdef _WIN32
   if (!RemoveDirectoryW(lua_toutf16(L, path)))
@@ -526,7 +526,7 @@ static int lpm_rmdir(lua_State *L) {
   return 0;
 }
 
-static int lpm_mkdir(lua_State *L) {
+static int ppm_mkdir(lua_State *L) {
   const char *path = luaL_checkstring(L, 1);
 #ifdef _WIN32
   int err = _wmkdir(lua_toutf16(L, path));
@@ -538,7 +538,7 @@ static int lpm_mkdir(lua_State *L) {
   return 0;
 }
 
-static int lpm_stat(lua_State *L) {
+static int ppm_stat(lua_State *L) {
   const char *path = luaL_checkstring(L, 1);
 #ifdef _WIN32
   wchar_t full_path[MAX_PATH];
@@ -593,7 +593,7 @@ static int lpm_stat(lua_State *L) {
     lua_pushnil(L);
   lua_setfield(L, -2, "symlink");
   if (err) {
-    lua_pushnil(L); 
+    lua_pushnil(L);
     luaL_win32_push_error(L, GetLastError());
     return 2;
   }
@@ -625,14 +625,14 @@ static int lpm_stat(lua_State *L) {
   lua_setfield(L, -2, "type");
   return 1;
 }
-/** END STOLEN LITE CODE **/
+/** END STOLEN PRAGTICAL CODE **/
 static int print_trace;
-static int lpm_trace(lua_State* L) {
+static int ppm_trace(lua_State* L) {
   print_trace = lua_toboolean(L, 1) ? 1 : 0;
   return 0;
 }
 
-#ifndef LPM_NO_GIT
+#ifndef PPM_NO_GIT
   static const char* git_error_last_string() {
     const git_error* last_error = git_error_last();
     return last_error->message;
@@ -680,7 +680,7 @@ static int lpm_trace(lua_State* L) {
   }
 
   // We move this out of main, because this is a significantly expensive function,
-  // and we don't need to call it every time we run lpm.
+  // and we don't need to call it every time we run ppm.
   static int git_initialized = 0;
   static int git_cert_type = 0;
   static char git_cert_path[MAX_PATH];
@@ -702,7 +702,7 @@ static int lpm_trace(lua_State* L) {
   }
 
 
-  static int lpm_reset(lua_State* L) {
+  static int ppm_reset(lua_State* L) {
     git_init();
     git_repository* repository = luaL_checkgitrepo(L, 1);
     const char* commit_name = luaL_checkstring(L, 2);
@@ -726,7 +726,7 @@ static int lpm_trace(lua_State* L) {
   }
 
 
-  static int lpm_init(lua_State* L) {
+  static int ppm_init(lua_State* L) {
     git_init();
     const char* path = luaL_checkstring(L, 1);
     const char* url = luaL_checkstring(L, 2);
@@ -758,10 +758,10 @@ static int lpm_trace(lua_State* L) {
     int complete;
     int error_code;
     char data[512];
-    lpm_thread_t* thread;
+    ppm_thread_t* thread;
   } fetch_context_t;
 
-  static int lpm_fetch_callback(lua_State* L, const git_transfer_progress *stats) {
+  static int ppm_fetch_callback(lua_State* L, const git_transfer_progress *stats) {
     lua_pushinteger(L, stats->received_bytes);
     lua_pushinteger(L, stats->total_objects);
     lua_pushinteger(L, stats->indexed_objects);
@@ -772,12 +772,12 @@ static int lpm_trace(lua_State* L) {
     return lua_pcall(L, 7, 0, 0);
   }
 
-  static int lpm_git_transfer_progress_cb(const git_transfer_progress *stats, void *payload) {
+  static int ppm_git_transfer_progress_cb(const git_transfer_progress *stats, void *payload) {
     fetch_context_t* context = (fetch_context_t*)payload;
     if (!context->threaded) {
       if (context->callback_function) {
         lua_rawgeti(context->L, LUA_REGISTRYINDEX, context->callback_function);
-        lpm_fetch_callback(context->L, stats);
+        ppm_fetch_callback(context->L, stats);
       }
     } else {
       context->progress = *stats;
@@ -787,7 +787,7 @@ static int lpm_trace(lua_State* L) {
   }
 
   static int lua_is_main_thread(lua_State* L) {
-    #ifndef LPM_NO_THREADS
+    #ifndef PPM_NO_THREADS
       int is_main = lua_pushthread(L);
       lua_pop(L, 1);
       return is_main;
@@ -797,11 +797,11 @@ static int lpm_trace(lua_State* L) {
   }
 
   static int no_verify_ssl;
-  static int lpm_git_transport_certificate_check_cb(struct git_cert *cert, int valid, const char *host, void *payload) {
+  static int ppm_git_transport_certificate_check_cb(struct git_cert *cert, int valid, const char *host, void *payload) {
     return 0; // If no_verify_ssl is enabled, basically always return 0 when this is set as callback.
   }
 
-  static void* lpm_fetch_thread(void* ctx) {
+  static void* ppm_fetch_thread(void* ctx) {
     git_remote* remote;
     fetch_context_t* context = (fetch_context_t*)ctx;
     int error = git_remote_lookup(&remote, context->repository, "origin");
@@ -817,8 +817,8 @@ static int lpm_trace(lua_State* L) {
     fetch_opts.depth = context->depth;
     #endif
     if (no_verify_ssl)
-      fetch_opts.callbacks.certificate_check = lpm_git_transport_certificate_check_cb;
-    fetch_opts.callbacks.transfer_progress = lpm_git_transfer_progress_cb;
+      fetch_opts.callbacks.certificate_check = ppm_git_transport_certificate_check_cb;
+    fetch_opts.callbacks.transfer_progress = ppm_git_transfer_progress_cb;
     char* strings[] = { context->refspec };
     git_strarray array = { strings, 1 };
 
@@ -843,13 +843,13 @@ static int lpm_trace(lua_State* L) {
   }
 
 
-  static int lpm_fetchk(lua_State* L, int status, lua_KContext ctx) {
+  static int ppm_fetchk(lua_State* L, int status, lua_KContext ctx) {
     lua_rawgeti(L, LUA_REGISTRYINDEX, (int)ctx);
     fetch_context_t* context = lua_touserdata(L, -1);
     lua_pop(L, 1);
     if (context->threaded && !context->error_code && context->callback_function && context->progress_update) {
       lua_rawgeti(L, LUA_REGISTRYINDEX, context->callback_function);
-      context->error_code = lpm_fetch_callback(L, &context->progress);
+      context->error_code = ppm_fetch_callback(L, &context->progress);
       if (context->error_code)
         strncpy(context->data, lua_tostring(L, -1), sizeof(context->data));
     }
@@ -869,11 +869,11 @@ static int lpm_trace(lua_State* L) {
       }
       return 1;
     }
-    return lua_yieldk(L, 0, (lua_KContext)ctx, lpm_fetchk);
+    return lua_yieldk(L, 0, (lua_KContext)ctx, ppm_fetchk);
   }
 
 
-  static int lpm_fetch(lua_State* L) {
+  static int ppm_fetch(lua_State* L) {
     git_init();
     int args = lua_gettop(L);
     fetch_context_t* context = lua_newuserdata(L, sizeof(fetch_context_t));
@@ -902,17 +902,17 @@ static int lpm_trace(lua_State* L) {
     }
     int ctx = luaL_ref(L, LUA_REGISTRYINDEX);
     if (lua_is_main_thread(L)) {
-      lpm_fetch_thread(context);
-      return lpm_fetchk(L, 0, ctx);
+      ppm_fetch_thread(context);
+      return ppm_fetchk(L, 0, ctx);
     } else {
-      context->thread = create_thread(lpm_fetch_thread, context);
-      return lua_yieldk(L, 0, (lua_KContext)ctx, lpm_fetchk);
+      context->thread = create_thread(ppm_fetch_thread, context);
+      return lua_yieldk(L, 0, (lua_KContext)ctx, ppm_fetchk);
     }
   }
 #else
-  static int lpm_init(lua_State* L) { return luaL_error(L, "this binary was compiled without git support"); }
-  static int lpm_fetch(lua_State* L) { return luaL_error(L, "this binary was compiled without git support"); }
-  static int lpm_reset(lua_State* L) { return luaL_error(L, "this binary was compiled without git support"); }
+  static int ppm_init(lua_State* L) { return luaL_error(L, "this binary was compiled without git support"); }
+  static int ppm_fetch(lua_State* L) { return luaL_error(L, "this binary was compiled without git support"); }
+  static int ppm_reset(lua_State* L) { return luaL_error(L, "this binary was compiled without git support"); }
 #endif
 
 static int mkdirp(lua_State* L, char* path, int len) {
@@ -955,7 +955,7 @@ static const char* strip_to_tar(char* dst, const char* src) {
   return dst;
 }
 
-static int lpm_extract(lua_State* L) {
+static int ppm_extract(lua_State* L) {
   const char* src = luaL_checkstring(L, 1);
   const char* dst = luaL_checkstring(L, 2);
 
@@ -965,7 +965,7 @@ static int lpm_extract(lua_State* L) {
   char error[128] = {0};
   uint8_t inbuf[4096];
   uint8_t outbuf[4096];
-    
+
   if (strstr(src, ".zip")) {
     int zip_error_code;
     zip_t* archive = zip_open(src, ZIP_RDONLY, &zip_error_code);
@@ -1068,10 +1068,10 @@ static int lpm_extract(lua_State* L) {
       int error_code = 0;
       if (!gzeof(gzfile))
         strncpy(error, gzerror(gzfile, &error_code), sizeof(error) - 1);
-        
+
       fclose(file);
       gzclose(gzfile);
-      
+
       if (error_code)
         return luaL_error(L, "can't unzip gzip archive %s: %s", src, error);
     } else if (strstr(src, ".xz") || strstr(src, ".txz")) {
@@ -1080,7 +1080,7 @@ static int lpm_extract(lua_State* L) {
       if (ret != LZMA_OK)
         return luaL_error(L, "can't unzip xz archive %s: %s", src, error);
       lzma_action action = LZMA_RUN;
-  
+
       FILE* input = lua_fopen(L, src, "rb");
       if (!input)
         return luaL_error(L, "can't open %s for reading: %s", src, strerror(errno));
@@ -1094,7 +1094,7 @@ static int lpm_extract(lua_State* L) {
       strm.avail_in = 0;
       strm.next_out = outbuf;
       strm.avail_out = sizeof(outbuf);
-      
+
       while (ret != LZMA_STREAM_END) {
         if (strm.avail_in == 0 && !feof(input)) {
           strm.next_in = inbuf;
@@ -1124,7 +1124,7 @@ static int lpm_extract(lua_State* L) {
       fclose(output);
       if (ret != LZMA_OK && ret != LZMA_STREAM_END)
         lua_error(L);
-    } else 
+    } else
       strcpy(actual_src, src);
 
     if (strstr(src, ".tar") || strstr(src, ".tgz")) {
@@ -1137,7 +1137,7 @@ static int lpm_extract(lua_State* L) {
       mtar_header_t h = {0}, before_h = {0}, always_h = {0};
       int has_ext_before = 0, has_ext_always = 0;
       char target[MAX_PATH];
-      
+
       while ((mtar_read_header(&tar, &h)) != MTAR_ENULLRECORD ) {
         switch (h.type) {
           case MTAR_TSYM:
@@ -1159,12 +1159,12 @@ static int lpm_extract(lua_State* L) {
             }
 
             if (h.type == MTAR_TSYM) {
-              lua_pushcfunction(L, lpm_symlink);
+              lua_pushcfunction(L, ppm_symlink);
               lua_pushstring(L, h.linkname);
               lua_pushlstring(L, target, target_length);
               lua_pcall(L, 2, 0, 0);
             } else if (h.type == MTAR_TDIR) {
-              lua_pushcfunction(L, lpm_mkdir);
+              lua_pushcfunction(L, ppm_mkdir);
               lua_pushlstring(L, target, target_length);
               lua_pcall(L, 1, 0, 0);
             } else {
@@ -1279,7 +1279,7 @@ static int lpm_extract(lua_State* L) {
   return 0;
 }
 
-#ifndef LPM_NO_NETWORK
+#ifndef PPM_NO_NETWORK
   static int has_setup_ssl;
   static mbedtls_x509_crt x509_certificate;
   static mbedtls_entropy_context entropy_context;
@@ -1287,12 +1287,12 @@ static int lpm_extract(lua_State* L) {
   static mbedtls_ssl_config ssl_config;
   static mbedtls_ssl_context ssl_context;
 
-  static void lpm_tls_debug(void *ctx, int level, const char *file, int line, const char *str) {
+  static void ppm_tls_debug(void *ctx, int level, const char *file, int line, const char *str) {
     fprintf(stderr, "%s:%04d: |%d| %s", file, line, level, str);
     fflush(stderr);
   }
 
-  static void lpm_libgit2_debug(git_trace_level_t level, const char *msg) {
+  static void ppm_libgit2_debug(git_trace_level_t level, const char *msg) {
     fprintf(stderr, "[libgit2]: %s\n", msg);
     fflush(stderr);
   }
@@ -1310,7 +1310,7 @@ static int lpm_extract(lua_State* L) {
   }
 
 
-  static int lpm_certs(lua_State* L) {
+  static int ppm_certs(lua_State* L) {
     const char* type = luaL_checkstring(L, 1);
     int status;
     if (has_setup_ssl) {
@@ -1336,9 +1336,9 @@ static int lpm_extract(lua_State* L) {
     #if defined(MBEDTLS_DEBUG_C)
     if (print_trace) {
       mbedtls_debug_set_threshold(5);
-      mbedtls_ssl_conf_dbg(&ssl_config, lpm_tls_debug, NULL);
+      mbedtls_ssl_conf_dbg(&ssl_config, ppm_tls_debug, NULL);
       git_init();
-      git_trace_set(GIT_TRACE_TRACE, lpm_libgit2_debug);
+      git_trace_set(GIT_TRACE_TRACE, ppm_libgit2_debug);
     }
     #endif
     has_setup_ssl = 1;
@@ -1430,7 +1430,7 @@ static int lpm_extract(lua_State* L) {
                 // It looks like a certificate is being encoded in base64 with two equals signs at the end for padding, and windows isn't expecting this, so it returns
                 // a length that is two characters longer than the end of string.
                 // Here's the offending certificate, at least in my Wine implementation:
-                /* 
+                /*
                 -----BEGIN CERTIFICATE-----^M
                 MIICnTCCAiSgAwIBAgIMCL2Fl2yZJ6SAaEc7MAoGCCqGSM49BAMDMIGRMQswCQYD^M
                 VQQGEwJVUzERMA8GA1UECBMISWxsaW5vaXMxEDAOBgNVBAcTB0NoaWNhZ28xITAf^M
@@ -1569,11 +1569,11 @@ static int lpm_extract(lua_State* L) {
   } get_context_t;
 
 
-  static int lpm_socket_write(get_context_t* context, int len) {
+  static int ppm_socket_write(get_context_t* context, int len) {
     return context->is_ssl ? mbedtls_ssl_write(&context->ssl, (unsigned char *) context->buffer, len) : write(context->s, context->buffer, len);
   }
 
-  static int lpm_socket_read(get_context_t* context, int len) {
+  static int ppm_socket_read(get_context_t* context, int len) {
     if (len == -1)
       len = sizeof(context->buffer) - context->buffer_length;
     if (len == 0)
@@ -1585,7 +1585,7 @@ static int lpm_extract(lua_State* L) {
   }
 
 
-  static int lpm_get_error(get_context_t* context, int error_code, const char* str, ...) {
+  static int ppm_get_error(get_context_t* context, int error_code, const char* str, ...) {
     if (error_code) {
       context->error_code = error_code;
       char mbed_buffer[256];
@@ -1606,7 +1606,7 @@ static int lpm_extract(lua_State* L) {
     return error_code;
   }
 
-  static int lpm_set_error(get_context_t* context, const char* str, ...) {
+  static int ppm_set_error(get_context_t* context, const char* str, ...) {
     va_list va;
     int offset = 0;
     va_start(va, str);
@@ -1616,7 +1616,7 @@ static int lpm_extract(lua_State* L) {
     return offset;
   }
 
-  static int lpm_getk(lua_State* L, int status, lua_KContext ctx) {
+  static int ppm_getk(lua_State* L, int status, lua_KContext ctx) {
     lua_rawgeti(L, LUA_REGISTRYINDEX, ctx);
     get_context_t* context = (get_context_t*)lua_touserdata(L, -1);
     lua_pop(L,1);
@@ -1628,19 +1628,19 @@ static int lpm_extract(lua_State* L) {
           if (status == MBEDTLS_ERR_SSL_WANT_READ || status == MBEDTLS_ERR_SSL_WANT_WRITE) {
             if (is_main_thread)
               break;
-            return lua_yieldk(L, 0, ctx, lpm_getk);
+            return lua_yieldk(L, 0, ctx, ppm_getk);
           }
           if (
-            lpm_get_error(context, status, "can't handshake") ||
-            lpm_get_error(context, mbedtls_ssl_get_verify_result(&context->ssl), "can't verify result")
+            ppm_get_error(context, status, "can't handshake") ||
+            ppm_get_error(context, mbedtls_ssl_get_verify_result(&context->ssl), "can't verify result")
           )
             goto cleanup;
           context->state = STATE_SEND;
         }
         case STATE_SEND: {
           context->buffer_length = snprintf(context->buffer, sizeof(context->buffer), "GET %s HTTP/1.1\r\nHost: %s:%d\r\nConnection: close\r\n\r\n", context->rest, context->hostname, context->port);
-          int length = lpm_socket_write(context, context->buffer_length);
-          if (length < context->buffer_length && lpm_get_error(context, length, "can't write to socket"))
+          int length = ppm_socket_write(context, context->buffer_length);
+          if (length < context->buffer_length && ppm_get_error(context, length, "can't write to socket"))
             goto cleanup;
           context->buffer_length = 0;
           context->buffer[0] = 0;
@@ -1650,16 +1650,16 @@ static int lpm_extract(lua_State* L) {
           const char* header_end;
           while (1) {
             header_end = strstr(context->buffer, "\r\n\r\n");
-            if (!header_end && context->buffer_length >= sizeof(context->buffer) - 1 && lpm_set_error(context, "response header buffer length exceeded"))
+            if (!header_end && context->buffer_length >= sizeof(context->buffer) - 1 && ppm_set_error(context, "response header buffer length exceeded"))
               goto cleanup;
             if (!header_end) {
-              int length = lpm_socket_read(context, -1);
-              if (length < 0 && lpm_get_error(context, length, "can't read from socket"))
+              int length = ppm_socket_read(context, -1);
+              if (length < 0 && ppm_get_error(context, length, "can't read from socket"))
                 goto cleanup;
               if (length == 0) {
                 if (is_main_thread)
                   break;
-                return lua_yieldk(L, 0, ctx, lpm_getk);
+                return lua_yieldk(L, 0, ctx, ppm_getk);
               }
             } else {
               header_end += 4;
@@ -1674,9 +1674,9 @@ static int lpm_extract(lua_State* L) {
                     lua_pushlstring(L, location, context->buffer_length);
                     lua_setfield(L, -2, "location");
                   } else
-                    lpm_set_error(context, "received invalid %d-response", code);
+                    ppm_set_error(context, "received invalid %d-response", code);
                 } else
-                  lpm_set_error(context, "received non 200-response of %d", code);
+                  ppm_set_error(context, "received non 200-response of %d", code);
                 goto report;
               }
               const char* transfer_encoding = get_header(context->buffer, "transfer-encoding", NULL);
@@ -1699,7 +1699,7 @@ static int lpm_extract(lua_State* L) {
               char* newline = (char*)strnstr_local(context->buffer, "\r\n", context->buffer_length);
               if (newline) {
                 *newline = '\0';
-                if ((sscanf(context->buffer, "%x", &context->chunk_length) != 1 && lpm_set_error(context, "error retrieving chunk length")))
+                if ((sscanf(context->buffer, "%x", &context->chunk_length) != 1 && ppm_set_error(context, "error retrieving chunk length")))
                   goto cleanup;
                 else if (context->chunk_length == 0)
                   goto finish;
@@ -1707,16 +1707,16 @@ static int lpm_extract(lua_State* L) {
                 context->buffer_length -= (newline + 2 - context->buffer);
                 if (context->buffer_length > 0)
                   memmove(context->buffer, newline + 2, context->buffer_length);
-              } else if (context->buffer_length >= sizeof(context->buffer) && lpm_set_error(context, "can't find chunk length")) {
+              } else if (context->buffer_length >= sizeof(context->buffer) && ppm_set_error(context, "can't find chunk length")) {
                 goto cleanup;
               } else {
-                int length = lpm_socket_read(context, -1);
-                if ((length <= 0 || (context->is_ssl && length == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY)) && lpm_get_error(context, length, "error retrieving full repsonse"))
+                int length = ppm_socket_read(context, -1);
+                if ((length <= 0 || (context->is_ssl && length == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY)) && ppm_get_error(context, length, "error retrieving full repsonse"))
                   goto cleanup;
                 if (length == 0) {
                   if (is_main_thread)
                     break;
-                  return lua_yieldk(L, 0, ctx, lpm_getk);
+                  return lua_yieldk(L, 0, ctx, ppm_getk);
                 }
               }
             }
@@ -1750,7 +1750,7 @@ static int lpm_extract(lua_State* L) {
                 if (!context->chunked)
                   goto finish;
                 if (context->buffer_length >= 2) {
-                  if (!strnstr_local(context->buffer, "\r\n", 2) && lpm_set_error(context, "invalid end to chunk"))
+                  if (!strnstr_local(context->buffer, "\r\n", 2) && ppm_set_error(context, "invalid end to chunk"))
                     goto cleanup;
                   memmove(context->buffer, &context->buffer[2], context->buffer_length - 2);
                   context->buffer_length -= 2;
@@ -1759,15 +1759,15 @@ static int lpm_extract(lua_State* L) {
               }
             }
             if (context->chunk_length > 0) {
-              int length = lpm_socket_read(context, imin(sizeof(context->buffer) - context->buffer_length, context->chunk_length - context->chunk_written + (context->chunked ? 2 : 0)));
+              int length = ppm_socket_read(context, imin(sizeof(context->buffer) - context->buffer_length, context->chunk_length - context->chunk_written + (context->chunked ? 2 : 0)));
               if ((!context->is_ssl && length == 0) || (context->is_ssl && context->content_length == -1 && length == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY))
                 goto finish;
-              if (length < 0 && lpm_get_error(context, length, "error retrieving full chunk"))
+              if (length < 0 && ppm_get_error(context, length, "error retrieving full chunk"))
                 goto cleanup;
               if (length == 0) {
                 if (is_main_thread)
                   break;
-                return lua_yieldk(L, 0, ctx, lpm_getk);
+                return lua_yieldk(L, 0, ctx, ppm_getk);
               }
             }
           }
@@ -1796,7 +1796,7 @@ static int lpm_extract(lua_State* L) {
       luaL_pushresult(&b);
       lua_newtable(L);
     }
-    if (context->content_length != -1 && context->total_downloaded != context->content_length && lpm_set_error(context, "error retrieving full response"))
+    if (context->content_length != -1 && context->total_downloaded != context->content_length && ppm_set_error(context, "error retrieving full response"))
       goto cleanup;
     report:
     if (context->callback_function && !context->error_code) {
@@ -1817,12 +1817,12 @@ static int lpm_extract(lua_State* L) {
       fclose(context->file);
     else
       luaL_unref(L, LUA_REGISTRYINDEX, context->lua_buffer);
-    if (context->error_code) 
+    if (context->error_code)
       return luaL_error(L, "%s", context->error);
     return 2;
   }
-  
-  static int lpm_get(lua_State* L) {
+
+  static int ppm_get(lua_State* L) {
     get_context_t* context = lua_newuserdata(L, sizeof(get_context_t));
     memset(context, 0, sizeof(get_context_t));
     int threaded = !lua_is_main_thread(L);
@@ -1862,9 +1862,9 @@ static int lpm_extract(lua_State* L) {
         mbedtls_net_set_block(&context->net);
       mbedtls_ssl_set_bio(&context->ssl, &context->net, mbedtls_net_send, mbedtls_net_recv, NULL);
       if (
-        lpm_get_error(context, mbedtls_ssl_setup(&context->ssl, &ssl_config), "can't set up ssl") ||
-        lpm_get_error(context, mbedtls_net_connect(&context->net, proxy_hostname, port, MBEDTLS_NET_PROTO_TCP), "can't connect to %s:%d", proxy_hostname, proxy_port) ||
-        lpm_get_error(context, mbedtls_ssl_set_hostname(&context->ssl, context->hostname), "can't set hostname to %s", context->hostname)
+        ppm_get_error(context, mbedtls_ssl_setup(&context->ssl, &ssl_config), "can't set up ssl") ||
+        ppm_get_error(context, mbedtls_net_connect(&context->net, proxy_hostname, port, MBEDTLS_NET_PROTO_TCP), "can't connect to %s:%d", proxy_hostname, proxy_port) ||
+        ppm_get_error(context, mbedtls_ssl_set_hostname(&context->ssl, context->hostname), "can't set hostname to %s", context->hostname)
       ) {
         mbedtls_ssl_free(&context->ssl);
         mbedtls_net_free(&context->net);
@@ -1897,16 +1897,16 @@ static int lpm_extract(lua_State* L) {
       context->state = STATE_SEND;
     }
     if (!threaded)
-      return lpm_getk(L, 0, luaL_ref(L, LUA_REGISTRYINDEX));
-    return lua_yieldk(L, 0, luaL_ref(L, LUA_REGISTRYINDEX), lpm_getk);
+      return ppm_getk(L, 0, luaL_ref(L, LUA_REGISTRYINDEX));
+    return lua_yieldk(L, 0, luaL_ref(L, LUA_REGISTRYINDEX), ppm_getk);
   }
 #else
-  static int lpm_get(lua_State* L) { return luaL_error(L, "this binary was compiled without network suport"); }
-  static int lpm_certs(lua_State* L) { return luaL_error(L, "this binary was compiled without network suport"); }
+  static int ppm_get(lua_State* L) { return luaL_error(L, "this binary was compiled without network suport"); }
+  static int ppm_certs(lua_State* L) { return luaL_error(L, "this binary was compiled without network suport"); }
 #endif
 
 
-static int lpm_chdir(lua_State* L) {
+static int ppm_chdir(lua_State* L) {
   #ifdef _WIN32
     if (_wchdir(lua_toutf16(L, luaL_checkstring(L, 1))))
   #else
@@ -1916,7 +1916,7 @@ static int lpm_chdir(lua_State* L) {
   return 0;
 }
 
-static int lpm_pwd(lua_State* L) {
+static int ppm_pwd(lua_State* L) {
   #ifdef _WIN32
     wchar_t buffer[MAX_PATH];
     if (!_wgetcwd(buffer, sizeof(buffer)))
@@ -1931,7 +1931,7 @@ static int lpm_pwd(lua_State* L) {
   return 1;
 }
 
-static int lpm_flock(lua_State* L) {
+static int ppm_flock(lua_State* L) {
   const char* path = luaL_checkstring(L, 1);
   luaL_checktype(L, 2, LUA_TFUNCTION);
   int error_handler = lua_type(L, 3) == LUA_TFUNCTION ? 3 : 0;
@@ -1996,12 +1996,12 @@ static double get_time() {
   #endif
 }
 
-static int lpm_time(lua_State* L) {
+static int ppm_time(lua_State* L) {
   lua_pushnumber(L, get_time());
   return 1;
 }
 
-static int lpm_setenv(lua_State* L) {
+static int ppm_setenv(lua_State* L) {
 #ifdef _WIN32
   if (!SetEnvironmentVariableW(lua_toutf16(L, luaL_checkstring(L, 1)), lua_toutf16(L, luaL_checkstring(L, 2))))
     return luaL_win32_error(L, GetLastError(), "unable to set system environment variable");
@@ -2014,83 +2014,83 @@ static int lpm_setenv(lua_State* L) {
 
 
 static const luaL_Reg system_lib[] = {
-  { "ls",        lpm_ls    },    // Returns an array of files.
-  { "stat",      lpm_stat  },    // Returns info about a single file.
-  { "mkdir",     lpm_mkdir },    // Makes a directory.
-  { "rmdir",     lpm_rmdir },    // Removes a directory.
-  { "hash",      lpm_hash  },    // Returns a hex sha256 hash.
-  { "tcflush",   lpm_tcflush },  // Flushes an terminal stream.
-  { "tcwidth",   lpm_tcwidth },  // Gets the terminal width in columns.
-  { "symlink",   lpm_symlink },  // Creates a symlink.
-  { "chmod",     lpm_chmod },    // Chmod's a file.
-  { "init",      lpm_init },     // Initializes a git repository with the specified remote.
-  { "fetch",     lpm_fetch },    // Updates a git repository with the specified remote.
-  { "reset",     lpm_reset },    // Updates a git repository to the specified commit/hash/branch.
-  { "get",       lpm_get },      // HTTP(s) GET request.
-  { "extract",   lpm_extract },  // Extracts .tar.gz, and .zip files.
-  { "trace",     lpm_trace },    // Sets trace bit.
-  { "certs",     lpm_certs },    // Sets the SSL certificate chain folder/file.
-  { "chdir",     lpm_chdir },    // Changes directory. Only use for --post actions.
-  { "pwd",       lpm_pwd },      // Gets existing directory. Only use for --post actions.
-  { "flock",     lpm_flock },    // Locks a file.
-  { "time",      lpm_time },     // Get high-precision system time.
-  { "setenv",    lpm_setenv },   // Sets a system environment variable.
+  { "ls",        ppm_ls    },    // Returns an array of files.
+  { "stat",      ppm_stat  },    // Returns info about a single file.
+  { "mkdir",     ppm_mkdir },    // Makes a directory.
+  { "rmdir",     ppm_rmdir },    // Removes a directory.
+  { "hash",      ppm_hash  },    // Returns a hex sha256 hash.
+  { "tcflush",   ppm_tcflush },  // Flushes an terminal stream.
+  { "tcwidth",   ppm_tcwidth },  // Gets the terminal width in columns.
+  { "symlink",   ppm_symlink },  // Creates a symlink.
+  { "chmod",     ppm_chmod },    // Chmod's a file.
+  { "init",      ppm_init },     // Initializes a git repository with the specified remote.
+  { "fetch",     ppm_fetch },    // Updates a git repository with the specified remote.
+  { "reset",     ppm_reset },    // Updates a git repository to the specified commit/hash/branch.
+  { "get",       ppm_get },      // HTTP(s) GET request.
+  { "extract",   ppm_extract },  // Extracts .tar.gz, and .zip files.
+  { "trace",     ppm_trace },    // Sets trace bit.
+  { "certs",     ppm_certs },    // Sets the SSL certificate chain folder/file.
+  { "chdir",     ppm_chdir },    // Changes directory. Only use for --post actions.
+  { "pwd",       ppm_pwd },      // Gets existing directory. Only use for --post actions.
+  { "flock",     ppm_flock },    // Locks a file.
+  { "time",      ppm_time },     // Get high-precision system time.
+  { "setenv",    ppm_setenv },   // Sets a system environment variable.
   { NULL,        NULL }
 };
 
-#ifndef LPM_ARCH_PROCESSOR
+#ifndef PPM_ARCH_PROCESSOR
   #if defined(__x86_64__) || defined(_M_AMD64) || defined(__MINGW64__)
-    #define LPM_ARCH_PROCESSOR "x86_64"
+    #define PPM_ARCH_PROCESSOR "x86_64"
   #elif defined(__i386__) || defined(_M_IX86) || defined(__MINGW32__)
-    #define LPM_ARCH_PROCESSOR "x86"
+    #define PPM_ARCH_PROCESSOR "x86"
   #elif defined(__aarch64__) || defined(_M_ARM64) || defined (_M_ARM64EC)
-    #define LPM_ARCH_PROCESSOR "aarch64"
+    #define PPM_ARCH_PROCESSOR "aarch64"
   #elif defined(__arm__) || defined(_M_ARM)
-    #define LPM_ARCH_PROCESSOR "arm"
+    #define PPM_ARCH_PROCESSOR "arm"
   #elif defined(__riscv_xlen) && __riscv_xlen == 32
-    #define LPM_ARCH_PROCESSOR "riscv32"
+    #define PPM_ARCH_PROCESSOR "riscv32"
   #elif defined(__riscv_xlen) && __riscv_xlen == 64
-    #define LPM_ARCH_PROCESSOR "riscv64"
+    #define PPM_ARCH_PROCESSOR "riscv64"
   #else
-    #error "Please define -DLPM_ARCH_PROCESSOR."
+    #error "Please define -DPPM_ARCH_PROCESSOR."
   #endif
 #endif
-#ifndef LPM_ARCH_PLATFORM
+#ifndef PPM_ARCH_PLATFORM
   #if _WIN32
-    #define LPM_ARCH_PLATFORM "windows"
+    #define PPM_ARCH_PLATFORM "windows"
   #elif __ANDROID__
-    #define LPM_ARCH_PLATFORM "android"
+    #define PPM_ARCH_PLATFORM "android"
   #elif __linux__
-    #define LPM_ARCH_PLATFORM "linux"
+    #define PPM_ARCH_PLATFORM "linux"
   #elif __APPLE__
-    #define LPM_ARCH_PLATFORM "darwin"
+    #define PPM_ARCH_PLATFORM "darwin"
   #else
-    #error "Please define -DLPM_ARCH_PLATFORM."
+    #error "Please define -DPPM_ARCH_PLATFORM."
   #endif
 #endif
-#ifndef LPM_ARCH_TUPLE
-  #define LPM_ARCH_TUPLE LPM_ARCH_PROCESSOR "-" LPM_ARCH_PLATFORM
+#ifndef PPM_ARCH_TUPLE
+  #define PPM_ARCH_TUPLE PPM_ARCH_PROCESSOR "-" PPM_ARCH_PLATFORM
 #endif
 
 
-#ifndef LPM_VERSION
-  #define LPM_VERSION "unknown"
+#ifndef PPM_VERSION
+  #define PPM_VERSION "unknown"
 #endif
-#ifndef LPM_DEFAULT_REPOSITORY
-  #define LPM_DEFAULT_REPOSITORY "https://github.com/lite-xl/lite-xl-plugin-manager.git:latest"
+#ifndef PPM_DEFAULT_REPOSITORY
+  #define PPM_DEFAULT_REPOSITORY "https://github.com/pragtical/plugin-manager.git:latest"
 #endif
 // If this is defined as empty string, we disable self-upgrading, as well as switching the executable symlink.
-#ifndef LPM_DEFAULT_RELEASE
+#ifndef PPM_DEFAULT_RELEASE
   #if _WIN32
-    #define LPM_DEFAULT_RELEASE "https://github.com/lite-xl/lite-xl-plugin-manager/releases/download/%r/lpm." LPM_ARCH_TUPLE ".exe"
+    #define PPM_DEFAULT_RELEASE "https://github.com/pragtical/plugin-manager/releases/download/%r/ppm." PPM_ARCH_TUPLE ".exe"
   #else
-    #define LPM_DEFAULT_RELEASE "https://github.com/lite-xl/lite-xl-plugin-manager/releases/download/%r/lpm." LPM_ARCH_TUPLE
+    #define PPM_DEFAULT_RELEASE "https://github.com/pragtical/plugin-manager/releases/download/%r/ppm." PPM_ARCH_TUPLE
   #endif
 #endif
 
-#ifdef LPM_STATIC
-  extern const char lpm_luac[];
-  extern unsigned int lpm_luac_len;
+#ifdef PPM_STATIC
+  extern const char ppm_luac[];
+  extern unsigned int ppm_luac_len;
 #endif
 
 
@@ -2105,29 +2105,29 @@ int main(int argc, char* argv[]) {
     lua_rawseti(L, -2, i+1);
   }
   lua_setglobal(L, "ARGV");
-  lua_pushliteral(L, LPM_VERSION);
+  lua_pushliteral(L, PPM_VERSION);
   lua_setglobal(L, "VERSION");
-  lua_pushliteral(L, LPM_ARCH_PLATFORM);
+  lua_pushliteral(L, PPM_ARCH_PLATFORM);
   lua_setglobal(L, "PLATFORM");
-  #ifdef LPM_NO_NETWORK
+  #ifdef PPM_NO_NETWORK
     lua_pushboolean(L, 1);
   #else
     lua_pushboolean(L, 0);
   #endif
   lua_setglobal(L, "NO_NETWORK");
-  #ifdef LPM_NO_GIT
+  #ifdef PPM_NO_GIT
     lua_pushboolean(L, 1);
   #else
     lua_pushboolean(L, 0);
   #endif
   lua_setglobal(L, "NO_GIT");
-  #ifdef LPM_NO_LXL
+  #ifdef PPM_NO_LXL
     lua_pushboolean(L, 1);
   #else
     lua_pushboolean(L, 0);
   #endif
   lua_setglobal(L, "NO_LXL");
-  #ifdef LPM_NO_REMOTE_EXECUTABLE
+  #ifdef PPM_NO_REMOTE_EXECUTABLE
     lua_pushboolean(L, 1);
   #else
     lua_pushboolean(L, 0);
@@ -2153,7 +2153,7 @@ int main(int argc, char* argv[]) {
   #else
     lua_pushboolean(L, 0);
   #endif
-  lua_setglobal(L, "LPM_RUN_FROM_GUI");
+  lua_setglobal(L, "PPM_RUN_FROM_GUI");
   lua_setglobal(L, "TTY");
   #if _WIN32
     lua_pushliteral(L, "\\");
@@ -2205,23 +2205,23 @@ int main(int argc, char* argv[]) {
   #endif
   lua_setglobal(L, "EXEFILE");
 
-  lua_pushliteral(L, LPM_ARCH_TUPLE);
+  lua_pushliteral(L, PPM_ARCH_TUPLE);
   lua_setglobal(L, "DEFAULT_ARCH");
-  lua_pushliteral(L, LPM_DEFAULT_REPOSITORY);
+  lua_pushliteral(L, PPM_DEFAULT_REPOSITORY);
   lua_setglobal(L, "DEFAULT_REPO_URL");
-  lua_pushliteral(L, LPM_DEFAULT_RELEASE);
+  lua_pushliteral(L, PPM_DEFAULT_RELEASE);
   lua_setglobal(L, "DEFAULT_RELEASE_URL");
-  #ifndef LPM_STATIC
-  if (luaL_loadfile(L, "src/lpm.lua") || lua_pcall(L, 0, 1, 0)) {
+  #ifndef PPM_STATIC
+  if (luaL_loadfile(L, "src/ppm.lua") || lua_pcall(L, 0, 1, 0)) {
   #else
-  if (luaL_loadbuffer(L, lpm_luac, lpm_luac_len, "lpm.lua") || lua_pcall(L, 0, 1, 0)) {
+  if (luaL_loadbuffer(L, ppm_luac, ppm_luac_len, "ppm.lua") || lua_pcall(L, 0, 1, 0)) {
   #endif
     fprintf(stderr, "internal error when starting the application: %s\n", lua_tostring(L, -1));
     return -1;
   }
   int status = lua_tointeger(L, -1);
   lua_close(L);
-  #ifndef LPM_NO_GIT
+  #ifndef PPM_NO_GIT
     if (git_initialized)
       git_libgit2_shutdown();
   #endif
