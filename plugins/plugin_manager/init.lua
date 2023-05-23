@@ -1,4 +1,4 @@
--- mod-version:3 --lite-xl 2.1 --priority:5
+-- mod-version:3 --pragtical 2.1 --priority:5
 
 local core = require "core"
 local common = require "core.common"
@@ -14,47 +14,47 @@ local PluginManager = {
 }
 local binary_extension = (PLATFORM == "Windows" and ".exe" or (PLATFORM == "Android" and ".so" or ""))
 config.plugins.plugin_manager = common.merge({
-  lpm_binary_name = "lpm." .. ARCH .. binary_extension,
-  lpm_binary_path = nil,
+  ppm_binary_name = "ppm." .. ARCH .. binary_extension,
+  ppm_binary_path = nil,
   -- Restarts the plugin manager on changes.
   restart_on_change = true,
   -- Path to a local copy of all repositories.
-  cachdir = USERDIR  .. PATHSEP .. "lpm",
+  cachdir = USERDIR  .. PATHSEP .. "ppm",
   -- Path to the folder that holds user-specified plugins.
   userdir = USERDIR,
   -- Path to ssl certificate directory or bunde. Nil will auto-detect.
   ssl_certs = nil,
   -- Whether or not to force install things.
   force = false,
-  -- Dumps commands that run to stdout, as well as responses from lpm.
+  -- Dumps commands that run to stdout, as well as responses from ppm.
   debug = false
 }, config.plugins.plugin_manager)
 
 package.path = package.path .. ";" .. USERDIR .. "/libraries/?.lua" .. ";" .. USERDIR .. "/libraries/?/init.lua" .. ";" .. DATADIR .. "/libraries/?.lua" .. ";" .. DATADIR .. "/libraries/?/init.lua"
 
-if not config.plugins.plugin_manager.lpm_binary_path then
+if not config.plugins.plugin_manager.ppm_binary_path then
   local paths = {
-    DATADIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. config.plugins.plugin_manager.lpm_binary_name,
-    USERDIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. config.plugins.plugin_manager.lpm_binary_name,
-    DATADIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. "lpm" .. binary_extension,
-    USERDIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. "lpm" .. binary_extension,
+    DATADIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. config.plugins.plugin_manager.ppm_binary_name,
+    USERDIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. config.plugins.plugin_manager.ppm_binary_name,
+    DATADIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. "ppm" .. binary_extension,
+    USERDIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. "ppm" .. binary_extension,
   }
   local path, s = os.getenv("PATH"), 1
   while true do
     local _, e = path:find(":", s)
-    table.insert(paths, path:sub(s, e and (e-1) or #path) .. PATHSEP .. config.plugins.plugin_manager.lpm_binary_name)
-    table.insert(paths, path:sub(s, e and (e-1) or #path) .. PATHSEP .. "lpm" .. binary_extension)
+    table.insert(paths, path:sub(s, e and (e-1) or #path) .. PATHSEP .. config.plugins.plugin_manager.ppm_binary_name)
+    table.insert(paths, path:sub(s, e and (e-1) or #path) .. PATHSEP .. "ppm" .. binary_extension)
     if not e then break end
     s = e + 1
   end
   for i, path in ipairs(paths) do
     if system.get_file_info(path) then
-      config.plugins.plugin_manager.lpm_binary_path = path
+      config.plugins.plugin_manager.ppm_binary_path = path
       break
     end
   end
 end
-if not config.plugins.plugin_manager.lpm_binary_path then error("can't find lpm binary, please supply one with config.plugins.plugin_manager.lpm_binary_path") end
+if not config.plugins.plugin_manager.ppm_binary_path then error("can't find ppm binary, please supply one with config.plugins.plugin_manager.ppm_binary_path") end
 
 local Promise = { }
 function Promise:__index(idx) return rawget(self, idx) or Promise[idx] end
@@ -89,7 +89,7 @@ local function extract_progress(chunk)
 end
 
 local function run(cmd, progress)
-  table.insert(cmd, 1, config.plugins.plugin_manager.lpm_binary_path)
+  table.insert(cmd, 1, config.plugins.plugin_manager.ppm_binary_path)
   table.insert(cmd, "--json")
   table.insert(cmd, "--quiet")
   table.insert(cmd, "--progress")
@@ -345,7 +345,7 @@ command.add(nil, {
   end,
   ["plugin-manager:refresh"] = function() PluginManager:refresh({ progress = PluginManager.view.progress_callback }):done(function() core.log("Successfully refreshed plugin listing.") end) end,
   ["plugin-manager:upgrade"] = function() PluginManager:upgrade({ progress = PluginManager.view.progress_callback }):done(function() core.log("Successfully upgraded installed plugins.") end) end,
-  ["plugin-manager:purge"] = function() PluginManager:purge({ progress = PluginManager.view.progress_callback }):done(function() core.log("Successfully purged lpm directory.") end) end,
+  ["plugin-manager:purge"] = function() PluginManager:purge({ progress = PluginManager.view.progress_callback }):done(function() core.log("Successfully purged ppm directory.") end) end,
   ["plugin-manager:show"] = function()
     local node = core.root_view:get_active_node_default()
     node:add_view(PluginManager.view(PluginManager))
@@ -359,12 +359,38 @@ if pcall(require, "plugins.terminal") then
       local arguments = { "-" }
       for i,v in ipairs(default_arguments) do table.insert(arguments, v) end
       local tv = terminal.class(common.merge(config.plugins.terminal, {
-        shell = config.plugins.plugin_manager.lpm_binary_path,
+        shell = config.plugins.plugin_manager.ppm_binary_path,
         arguments = arguments
       }))
       core.root_view:get_active_node_default():add_view(tv)
     end
   })
 end
+
+local cli = require "core.cli"
+
+cli.register {
+  command = "pm",
+  description = "Access to the plugin manager.",
+  usage = "[options] [subcommands]",
+  exit_editor = true,
+  execute = function()
+    if not config.plugins.plugin_manager.ppm_binary_path then
+      print(cli.colorize("Can't find ppm binary, please supply one with config.plugins.plugin_manager.ppm_binary_path", "red"))
+    else
+      local start = 0;
+      for i=0, #ARGS do
+        if ARGS[i] == "pm" then
+          start = i + 1
+          break
+        end
+      end
+      os.execute(
+        '"' .. config.plugins.plugin_manager.ppm_binary_path .. '" '
+        .. table.concat(ARGS, " ", start)
+      )
+    end
+  end
+}
 
 return PluginManager
