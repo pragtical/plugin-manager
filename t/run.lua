@@ -1,89 +1,89 @@
 local json = require "libraries.json"
-local lpm
+local ppm
 local function assert_exists(path) if not io.open(path, "rb")  then error("assertion failed: file " .. path .. " does not exist", 2) end end
 local function assert_not_exists(path) if io.open(path, "rb") then error("assertion failed: file " .. path .. " exists", 2) end end
 local tmpdir = os.getenv("TMPDIR") or "/tmp"
 local fast = os.getenv("FAST")
-local userdir = tmpdir .. "/lpmtest"
+local userdir = tmpdir .. "/ppmtest"
 setmetatable(_G, { __index = function(t, k) if not rawget(t, k) then error("cannot get undefined global variable: " .. k, 2) end end, __newindex = function(t, k) error("cannot set global variable: " .. k, 2) end  })
 
 
 local tests = {
   ["00_install_singleton"] = function()
-    local plugins = lpm("list bracketmatch")["addons"]
+    local plugins = ppm("list bracketmatch")["addons"]
     assert(#plugins == 1)
     assert(plugins[1].organization == "singleton")
     assert(plugins[1].status == "available")
-    local actions = lpm("install bracketmatch")["actions"]
+    local actions = ppm("install bracketmatch")["actions"]
     assert(actions[1]:find("Installing singleton"))
     assert_exists(userdir .. "/plugins/bracketmatch.lua")
-    actions = lpm("uninstall bracketmatch")["actions"]
+    actions = ppm("uninstall bracketmatch")["actions"]
     assert_not_exists(userdir .. "/plugins/bracketmatch.lua")
   end,
   ["01_upgrade_singleton"] = function()
-    lpm("install bracketmatch")
-    local plugins = lpm("list bracketmatch")["addons"]
+    ppm("install bracketmatch")
+    local plugins = ppm("list bracketmatch")["addons"]
     assert(#plugins == 1)
     assert(plugins[1].status == "installed")
     assert_exists(plugins[1].path)
     io.open(plugins[1].path, "ab"):write("-- this is a test comment to modify the checksum"):close()
-    plugins = lpm("list bracketmatch")["addons"]
+    plugins = ppm("list bracketmatch")["addons"]
     assert(#plugins == 2)
-    lpm("install bracketmatch")
-    plugins = lpm("list bracketmatch")["addons"]
+    ppm("install bracketmatch")
+    plugins = ppm("list bracketmatch")["addons"]
     assert(#plugins == 1)
-    lpm("install console")
+    ppm("install console")
     assert_exists(userdir .. "/plugins/console/init.lua")
   end,
   ["02_install_complex"] = function()
-    local plugins = lpm("list plugin_manager")["addons"]
+    local plugins = ppm("list plugin_manager")["addons"]
     assert(#plugins == 1)
     assert(plugins[1].organization == "complex")
     assert(plugins[1].status == "available")
     assert(plugins[1].dependencies.json)
-    local actions = lpm("install plugin_manager")["actions"]
+    local actions = ppm("install plugin_manager")["actions"]
     assert_exists(userdir .. "/libraries/json.lua")
     assert_exists(userdir .. "/plugins/plugin_manager")
     assert_exists(userdir .. "/plugins/plugin_manager/init.lua")
-    actions = lpm("uninstall plugin_manager")["actions"]
+    actions = ppm("uninstall plugin_manager")["actions"]
     assert_not_exists(userdir .. "/plugins/plugin_manager")
-    lpm("install editorconfig")
+    ppm("install editorconfig")
     assert_exists(userdir .. "/plugins/editorconfig")
     assert_exists(userdir .. "/plugins/editorconfig/init.lua")
   end,
   ["03_upgrade_complex"] = function()
-    local actions = lpm("install plugin_manager")
-    local plugins = lpm("list plugin_manager")["addons"]
+    local actions = ppm("install plugin_manager")
+    local plugins = ppm("list plugin_manager")["addons"]
     assert(#plugins == 1)
     assert(plugins[1].organization == "complex")
     assert(plugins[1].status == "installed")
   end,
   ["04_list_plugins"] = function()
-    local plugins = lpm("list")["addons"]
+    local plugins = ppm("list")["addons"]
     assert(#plugins > 20)
   end,
   ["05_install_url"] = function()
-    local plugins = lpm("list eofnewline")["addons"]
+    local plugins = ppm("list eofnewline")["addons"]
     assert(#plugins == 1)
     assert(plugins[1].organization == "singleton")
     assert(plugins[1].status == "available")
-    local actions = lpm("install eofnewline")
+    local actions = ppm("install eofnewline")
     assert_exists(userdir .. "/plugins/eofnewline.lua")
   end,
   ["06_install_stub"] = function()
-    local plugins = lpm("list lsp")["addons"]
+    local plugins = ppm("list lsp")["addons"]
     assert(#plugins > 1)
     for i, plugin in ipairs(plugins) do
       if plugin.id == "lsp" then
         assert(plugins[1].organization == "complex")
         assert(plugins[1].status == "available")
-        local actions = lpm("install lsp")
+        local actions = ppm("install lsp")
         assert_exists(userdir .. "/plugins/lsp/init.lua")
         assert_exists(userdir .. "/libraries/widget/init.lua")
         break
       end
     end
-    local actions = lpm("install encodings")
+    local actions = ppm("install encodings")
     assert_exists(userdir .. "/plugins/encodings.lua")
     local stat = system.stat(userdir .. "/plugins/encodings.lua")
     assert(stat)
@@ -99,24 +99,24 @@ local tests = {
    assert(#results["addons"] == 2)
   end,
   ["08_install_many"] = function()
-    lpm("install encoding gitblame gitstatus language_ts lsp minimap")
+    ppm("install encoding gitblame gitstatus language_ts lsp minimap")
   end,
   ["09_misc_commands"] = function()
-    lpm("update")
-    lpm("upgrade")
+    ppm("update")
+    ppm("upgrade")
   end,
   ["10_install_multiarch"] = function()
-    lpm("install plugin_manager --arch x86_64-windows --arch x86_64-linux")
-    assert_exists(userdir .. "/plugins/plugin_manager/lpm.x86_64-linux")
-    assert_exists(userdir .. "/plugins/plugin_manager/lpm.x86_64-windows.exe")
+    ppm("install plugin_manager --arch x86_64-windows --arch x86_64-linux")
+    assert_exists(userdir .. "/plugins/plugin_manager/ppm.x86_64-linux")
+    assert_exists(userdir .. "/plugins/plugin_manager/ppm.x86_64-windows.exe")
     assert_exists(userdir .. "/plugins/plugin_manager/init.lua")
   end,
   ["11_dependency_check"] = function()
-    lpm("install lsp")
+    ppm("install lsp")
     assert_exists(userdir .. "/plugins/lsp")
     assert_exists(userdir .. "/plugins/lintplus")
     assert_exists(userdir .. "/plugins/settings.lua")
-    lpm("uninstall lsp")
+    ppm("uninstall lsp")
     assert_not_exists(userdir .. "/plugins/lsp")
     assert_not_exists(userdir .. "/plugins/lintplus")
     assert_not_exists(userdir .. "/plugins/settings.lua")
@@ -124,13 +124,13 @@ local tests = {
 }
 
 local last_command_result, last_command
-lpm = function(cmd)
+ppm = function(cmd)
   last_command = arg[0] .. " --quiet --json --assume-yes --userdir=" .. userdir .. " " .. cmd
   local pipe = io.popen(last_command, "r")
   local result = pipe:read("*all")
   last_command_result = result ~= "" and json.decode(result) or nil
   local success = pipe:close()
-  if not success then error("error calling lpm", 2) end
+  if not success then error("error calling ppm", 2) end
   return last_command_result
 end
 
@@ -144,14 +144,14 @@ local function run_tests(tests, arg)
   end
   table.sort(names)
   local max_name = 0
-  os.execute("rm -rf " .. tmpdir .. "/lpmtest && mkdir -p " .. tmpdir .. "/lpmtest");
+  os.execute("rm -rf " .. tmpdir .. "/ppmtest && mkdir -p " .. tmpdir .. "/ppmtest");
   for i,k in ipairs(names) do max_name = math.max(max_name, #k) end
   for i,k in ipairs(names) do
     local v = tests[k]
     if fast then
-      os.execute("rm -rf " .. tmpdir .. "/lpmtest/plugins && mkdir -p " .. tmpdir .. "/lpmtest");
+      os.execute("rm -rf " .. tmpdir .. "/ppmtest/plugins && mkdir -p " .. tmpdir .. "/ppmtest");
     else
-      os.execute("rm -rf " .. tmpdir .. "/lpmtest && mkdir -p " .. tmpdir .. "/lpmtest");
+      os.execute("rm -rf " .. tmpdir .. "/ppmtest && mkdir -p " .. tmpdir .. "/ppmtest");
     end
     io.stdout:write(string.format("test %-" .. (max_name + 1) .. "s: ", k))
     local failed = false

@@ -372,7 +372,7 @@ keymap.add {
 }
 
 
-PluginView.menu:register(nil, {
+PluginView.menu:register(function() return core.active_view:is(PluginView) end, {
   { text = "Install", command = "plugin-manager:install-hovered" },
   { text = "Uninstall", command = "plugin-manager:uninstall-hovered" },
   { text = "View Source", command = "plugin-manager:view-source-hovered" },
