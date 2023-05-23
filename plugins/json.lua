@@ -1,4 +1,4 @@
--- mod-version:3 --lite-xl 2.1
+-- mod-version:3 --pragtical 2.1
 --
 -- json.lua
 --

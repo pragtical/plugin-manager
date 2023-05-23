@@ -3,14 +3,14 @@
 : ${CC=gcc}
 : ${AR=ar}
 : ${MAKE=make}
-: ${BIN=lpm}
+: ${BIN=ppm}
 : ${JOBS=4}
 
 SRCS="src/*.c"
 CFLAGS="$CFLAGS -Ilib/prefix/include"
 LDFLAGS="$LDFLAGS -lm -Llib/prefix/lib"
 
-[[ "$@" == "clean" ]] && rm -rf lib/libgit2/build lib/zlib/build lib/libzip/build lib/mbedtls-2.27.0/build lib/prefix lua $BIN *.exe src/lpm.luac src/lpm.lua.c && exit 0
+[[ "$@" == "clean" ]] && rm -rf lib/libgit2/build lib/zlib/build lib/libzip/build lib/mbedtls-2.27.0/build lib/prefix lua $BIN *.exe src/ppm.luac src/ppm.lua.c && exit 0
 cmake --version >/dev/null 2>/dev/null || { echo "Please ensure that you have cmake installed." && exit -1; }
 
 # Build supporting libraries, libz, libmbedtls, libmbedcrypto, libgit2, libzip, libmicrotar, liblua
@@ -37,10 +37,10 @@ fi
 [[ "$@" != *"-llua"* ]] && CFLAGS="$CFLAGS -Ilib/lua -DMAKE_LIB=1" && SRCS="$SRCS lib/lua/onelua.c"
 
 # Build the pre-packaged lua file into the executbale.
-if [[ "$@" == *"-DLPM_STATIC"* ]]; then
+if [[ "$@" == *"-DPPM_STATIC"* ]]; then
   [[ ! -e "lua.exe" ]] && gcc -Ilib/lua -o lua.exe lib/lua/onelua.c -lm
-  ./lua.exe -e 'io.open("src/lpm.luac", "wb"):write(string.dump(assert(loadfile("src/lpm.lua"))))'
-  xxd -i src/lpm.luac > src/lpm.lua.c
+  ./lua.exe -e 'io.open("src/ppm.luac", "wb"):write(string.dump(assert(loadfile("src/ppm.lua"))))'
+  xxd -i src/ppm.luac > src/ppm.lua.c
 fi
 
 [[ $OSTYPE != 'msys'* && $CC != *'mingw'* && $CC != "emcc" ]] && CFLAGS="$CFLAGS -DLUA_USE_LINUX" && LDFLAGS="$LDFLAGS -ldl"
