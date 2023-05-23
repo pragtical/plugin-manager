@@ -1,7 +1,7 @@
-project('lpm',
+project('ppm',
     ['c'],
     version : '1.0.4',
-    license : 'LPM',
+    license : 'PPM',
     meson_version : '>= 0.56',
 )
 
@@ -33,18 +33,18 @@ if not microtar_dep.found()
     message('Using git module for microtar')
 endif
 
-lpm_source = files('src/lpm.c')
+ppm_source = files('src/ppm.c')
 cflags = []
 if get_option('static')
     lua_exe = find_program('lua')
 
-    lpm_source += configure_file(
+    ppm_source += configure_file(
         capture: false,
-        command: [lua_exe, '-e', 'f = string.dump(assert(loadfile("@INPUT0@"))) io.open("@OUTPUT0@", "wb"):write("unsigned char lpm_luac[] = \"" .. f:gsub(".", function (c) return string.format("\\\x%02X",string.byte(c)) end) .. "\";unsigned int lpm_luac_len = " .. #f .. ";")'],
-        input: files('src/lpm.lua'),
-        output: 'lpm.lua.c'
+        command: [lua_exe, '-e', 'f = string.dump(assert(loadfile("@INPUT0@"))) io.open("@OUTPUT0@", "wb"):write("unsigned char ppm_luac[] = \"" .. f:gsub(".", function (c) return string.format("\\\x%02X",string.byte(c)) end) .. "\";unsigned int ppm_luac_len = " .. #f .. ";")'],
+        input: files('src/ppm.lua'),
+        output: 'ppm.lua.c'
     )
-    cflags += '-DLPM_STATIC'
+    cflags += '-DPPM_STATIC'
 endif
 
-executable('lpm', lpm_source, dependencies: [zlib_dep, mbedtls_dep, libgit2_dep, libzip_dep, lua_dep, microtar_dep], c_args: cflags)
+executable('ppm', ppm_source, dependencies: [zlib_dep, mbedtls_dep, libgit2_dep, libzip_dep, lua_dep, microtar_dep], c_args: cflags)
