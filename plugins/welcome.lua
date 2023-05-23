@@ -1,4 +1,4 @@
--- mod-version:3 --lite-xl 2.1
+-- mod-version:3
 
 local core = require "core"
 local style = require "core.style"
@@ -36,12 +36,12 @@ end
 
 local buttons = {
   { label = "Install Addons Package", command = "welcome:install-addons", tooltip = {
-    "Installs syntax highlightings, themes, and plugins that make Lite XL easier to use.",
+    "Installs syntax highlightings, themes, and plugins that make Pragtical easier to use.",
     "",
-    "Recommended for newcomers to Lite XL.",
+    "Recommended for newcomers to Pragtical.",
     "Requires a network connection."
   } },
-  { label = "Open Plugin Manager", command = "welcome:open-plugin-manager", tooltip = { "Manually select plugins you'd like to install before beginning with Lite XL.", "", "Requires a network connection." } },
+  { label = "Open Plugin Manager", command = "welcome:open-plugin-manager", tooltip = { "Manually select plugins you'd like to install before beginning with Pragtical.", "", "Requires a network connection." } },
   { label = "Dismiss Welcome Options", command = "welcome:dismiss", tooltip = { "Dismisses this screen permanently." } }
 }
 
@@ -60,7 +60,7 @@ function EmptyView:draw()
   end
 
 
-  local title = "Lite XL"
+  local title = "Pragtical"
   local version = "version " .. VERSION
   local title_width = style.big_font:get_width(title)
   local version_width = style.font:get_width(version)
@@ -153,4 +153,3 @@ command.add(EmptyView, {
     terminate_welcome()
   end
 })
-

@@ -1,0 +1,30 @@
+{
+    "version": "latest",
+    "description": "Plugin and package manager for Pragtical editor.",
+    "homepage": "https://github.com/pragtical/plugin-manager",
+    "license": "PPM",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.x86_64-windows.exe#/ppm.exe",
+            "checksum": "SKIP"
+        }
+    },
+    "bin": "ppm.exe",
+    "shortcuts": [
+        [
+            "ppm.exe",
+            "Pragtical Plugin Manager"
+        ]
+    ],
+    "checkver": {
+        "url": "https://github.com/pragtical/plugin-manager/tags",
+        "regex": "/releases/tag/(?:v|V)?([\\d.]+)"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.x86_64-windows.exe"
+            }
+        }
+    }
+}

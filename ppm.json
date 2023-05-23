@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema",
-  "$id": "https://github.com/lite-xl/lite-xl-plugin-manager/raw/master/lpm.json",
-  "title": "Lite XL Plugin Manager Manifest",
-  "description": "Description of Lite XL addons",
+  "$id": "https://github.com/pragtical/plugin-manager/raw/master/ppm.json",
+  "title": "Pragtical Plugin Manager Manifest",
+  "description": "Description of Pragtical addons",
   "$comment": "TODO: Add our own uri format for <url>:<ref>.",
   "definitions": {
     "addon-id": {
@@ -11,7 +11,7 @@
     },
     "addon-version": {
       "type": "string",
-      "$comment": "TODO: should we avoid limiting this to only 3 components? See lite-xl-lsp-servers -> lsp_json.",
+      "$comment": "TODO: should we avoid limiting this to only 3 components? See pragtical-lsp-servers -> lsp_json.",
       "pattern": "^[0-9]+(\\.[0-9]+){0,2}$"
     },
     "addon-version-specifier": {
@@ -31,7 +31,7 @@
       ]
     },
     "arch": {
-      "description": "Lite XL/Clang architecture tuple that the file is relevant for",
+      "description": "Pragtical/Clang architecture tuple that the file is relevant for",
       "type": "string",
       "examples": [
         "x86_64-linux",
@@ -260,8 +260,8 @@
         ]
       }
     },
-    "lite-xls": {
-      "description": "Represents the different versions of Lite XL that are registered in this repository",
+    "pragticals": {
+      "description": "Represents the different versions of Pragtical that are registered in this repository",
       "type": "array",
       "items": {
         "type": "object",
@@ -272,7 +272,7 @@
             "$ref": "#/definitions/mod-version"
           },
           "files": {
-            "description": "Files that are downloaded. If the file is an archive, it will be automatically extracted. Conventionally, there should be a single file per architecture that is a `.tar.gz` or `.zip` containing all necessary files for Lite XL to run.",
+            "description": "Files that are downloaded. If the file is an archive, it will be automatically extracted. Conventionally, there should be a single file per architecture that is a `.tar.gz` or `.zip` containing all necessary files for Pragtical to run.",
             "$ref": "#/definitions/files"
           }
         }

@@ -1,17 +1,17 @@
 # 1.2.9
 
-* Fixed a major bug which caused lpm to stop working in CI pipelines without `$TERM` defined.
+* Fixed a major bug which caused ppm to stop working in CI pipelines without `$TERM` defined.
 * Fixed some minor bugs with templating in `--table` and `--raw`.
 * Changed how the `url` field is reported.
 
 # 1.2.8
 
 * Fixed a bug where when we `handleize` certain strings, they'd erroneously end in `-`.
-* Changed separator for `LPM_PLUGINS` to be a `,` instead of `:`, due to plugins.
+* Changed separator for `PPM_PLUGINS` to be a `,` instead of `:`, due to plugins.
 * Spec now properly contains `checksum` at an `addon` level for when `url` is specified.
 * Added in a warning for when you use an explcit repository as part of a `run` list, and it contains a version of an addon you're trying to run that is lower than the one in your primrary repos.
 * Fixed issues with meson and `mbedtls`.
-* Major internal restructuring to better accomodate `lpm` plugins.
+* Major internal restructuring to better accomodate `ppm` plugins.
 * Renamed `CFLAGS` and `LDFLAGS` to `COMPILE_FLAGS` and `LINK_FLAGS` internally in `build.sh`, so as to not disrupt more exotic build configurations that rely on these variables.
 * Removed hack to support jgmdev's older libraries.
 * Allowed specification of `HOSTCC` to build lua for static builds.
@@ -32,7 +32,7 @@
 # 1.2.6
 
 * Added in support for arbitrary execution of strings, rather than just of files with `exec`.
-* Added in support for accessing `lpm` internals with `exec`, just as you would with plugins.
+* Added in support for accessing `ppm` internals with `exec`, just as you would with plugins.
 
 # 1.2.5
 
@@ -42,7 +42,7 @@
 * Added in detection of being a TTY on windows for some terminals.
 * Fixed a bug with self-upgrading in `common.copy` that would cause a race between the garbage collector and the main program on windows.
 * Allowed for pretty-printing of json.
-* Allowed for local plugins to exist for `lpm`, allowing it to modify behaviour if specified with `--plugin` or if located in `~/.config/lpm/plugins`; plugins currently located at https://github.com/adamharrison/lite-xl-maintenance.
+* Allowed for local plugins to exist for `ppm`, allowing it to modify behaviour if specified with `--plugin` or if located in `~/.config/ppm/plugins`; plugins currently located at https://github.com/adamharrison/lite-xl-maintenance.
 
 # 1.2.4
 
@@ -54,7 +54,7 @@
 # 1.2.3
 
 * STDIN flushing was added for prompts.
-* Partially downloading files, then cancelling no longer causes lpm to break on subsequent operations.
+* Partially downloading files, then cancelling no longer causes ppm to break on subsequent operations.
 * Fixed a bug relating to local paths not being computed directly under some cirstumances leading to errors on install.
 * Small terminals will no longer spew huge amounts of output into the console when downloading things; we'll now truncate download status prompts when attached to a small TTY.
 * Improved error handlings of tar extracting.
@@ -62,7 +62,7 @@
 
 # 1.2.2
 
-* Added in ability to disallow `self-upgrade` at compile time with `-DLPM_DEFAULT_RELEASE=''`.
+* Added in ability to disallow `self-upgrade` at compile time with `-DPPM_DEFAULT_RELEASE=''`.
 * Added in the ability to specify which files to chmod executable with `addons.files.extra.chmod_executable`.
 
 # 1.2.1
@@ -74,7 +74,7 @@
 * Fixed download progress bars not actually getting to 100%.
 * Fixed it so that dangling symlinks no longer cause issues with determining which executable is running.
 * Improved interface to `common.get`.
-* Improved escaping of arguments to running bottles, allowing `lpm run a\ b "c d"` to run correctly.
+* Improved escaping of arguments to running bottles, allowing `ppm run a\ b "c d"` to run correctly.
 * Fixed issue with filters not working correctly in lists.
 * Added in `--raw`, allowing you to easily dump lists to console, for manipulation with `awk` and `sed`.
 
@@ -82,7 +82,7 @@
 
 * Vendored `libmicrotar`, so that it can be used to open POSIX tar archives, as well as tar archives that have > 100 character filenames. Thank you @Gaspartcho!
 * Fixed bug that tried to uninstall core depednencies. Thanks @Gaspartcho!
-* Fixed issue with `lpm` not correctly renaming bottles, or moving files around.
+* Fixed issue with `ppm` not correctly renaming bottles, or moving files around.
 * Added in ability to `--mask`, so that you can explicitly cut out dependencies that you think aren't requried on install/uninstall.
 * Made `--ephemeral` bottles have distinct hashes from non-epehemeral ones.
 * Fixed a bug where we tried to double-install depdendencies if they were explicitly specified in the install command.
@@ -91,10 +91,10 @@
 
 * Added in `font` as a new `type` for addons.
 * Fixed a bug that made it so that complex plugins that didn't specify a path would clone their repos, instead of just downloading the listed files.
-* Fixed bugs around specifying a lite-xl to add to the system.
-* Added documentation for `lpm hash`.
-* Added in ability to automatically update checksums in manifests under certain circumstances with `lpm update-checksums`.
-* Improved handling around adding disparate versions of lite-xl with binary, data and user directories in different places.
+* Fixed bugs around specifying a pragtical to add to the system.
+* Added documentation for `ppm hash`.
+* Added in ability to automatically update checksums in manifests under certain circumstances with `ppm update-checksums`.
+* Improved handling around adding disparate versions of pragtical with binary, data and user directories in different places.
 
 # 1.0.14
 
@@ -106,9 +106,9 @@
 # 1.0.13
 
 * Merged in `welcome.lua` as a plugin.
-* Added in ability to specify `--ephemeral` when running bottles; cleans up the bottle when lite-xl exits.
+* Added in ability to specify `--ephemeral` when running bottles; cleans up the bottle when pragtical exits.
 * Improved error handling by removing unecessary line numbers.
-* Made running of `lpm` more deterministic.
+* Made running of `ppm` more deterministic.
 * Made it so that we only `fetch` when necessary in order to speed things up.
 * Fixed some errors where cache wasn't being invaldiated approprirately.
 * Allowed for short looks up when referencing commit ids.
@@ -139,9 +139,9 @@
 
 # 1.0.9
 
-* `lpm` now automatically extracts and chmod's `.gz` files.
+* `ppm` now automatically extracts and chmod's `.gz` files.
 * Added in preprocessor guard for shallow cloning to allow non-bleeding-edge `libgit2` linkings.
-* Fixed bug where dangling symlinks of lite binaries in `$PATH` would cause an error.
+* Fixed bug where dangling symlinks of pragtical binaries in `$PATH` would cause an error.
 
 # 1.0.8
 
@@ -149,8 +149,8 @@
 * Added method to grab and install orphan plugins from one-off repos.
 * Passed debug build status through to underlying libraries.
 * Fixed bug where we compared sizes of folders to determined if they were the same.
-* Made it so you can set the define LPM_DEFAULT_REPOSITORY if you want to build a custom manager.
-* Made it so tests run more smoothly, and will always use the lpm you compiled, instead of system lpm.
+* Made it so you can set the define PPM_DEFAULT_REPOSITORY if you want to build a custom manager.
+* Made it so tests run more smoothly, and will always use the ppm you compiled, instead of system ppm.
 * Normalized paths on windows to backslashes for consistency.
 
 # 1.0.7
@@ -164,7 +164,7 @@
 * Allowed for dashes in auto-generated ids.
 * Fixed a bug that stopped things form working when explicitly calling `init`.
 * Allowed `run` to use `--remotes`.
-* Fixed bug for auto-detecting data directories, when determining system `lite-xl`.
+* Fixed bug for auto-detecting data directories, when determining system `pragtical`.
 
 # 1.0.6
 
@@ -174,7 +174,7 @@
 
 # 1.0.5
 
-* Marked `lpm` for `plugin_manager` as optional.
+* Marked `ppm` for `plugin_manager` as optional.
 * Made `--help` and `help` output on `stdout`, rather than `stderr`, following convention.
 * Removed system configuration search paths for `git`.
 * Removed `xxd` as a build dependency.
@@ -186,7 +186,7 @@
 # 1.0.4
 
 * Added in metapackage support into manifest and SPEC.
-* Fixed issue with system lite-xls not being detected correctly.
+* Fixed issue with system pragticals not being detected correctly.
 * Colorized output by default.
 * Added in NO_COLOR standard.
 * Updated SPEC and fixed a few spelling/grammatical errors.
@@ -201,14 +201,14 @@
 * Suppresses the progress bar by default if we're not on a TTY.
 * Added `url` as a field to `SPEC.md`.
 * Modified `run` so that it'll use the system version if you don't specify one.
-* Added the ability to specify a repo url as part of `run`, so you can easily test new plugin branches and their plugins without actually modifying your lpm state.
+* Added the ability to specify a repo url as part of `run`, so you can easily test new plugin branches and their plugins without actually modifying your ppm state.
 * Fixed a few typos.
 * Fixed issue with `run` not handling cases where plugins were either orphaned or core plugins, which would cause the bottle to be incorrectly constructed.
-* Fixed issue where you could add non-numeric lite versions.
-* Fixed issue where tables generated with lpm didn't annotate non-remote url plugins with \*.
+* Fixed issue where you could add non-numeric pragtical versions.
+* Fixed issue where tables generated with ppm didn't annotate non-remote url plugins with \*.
 * Fixed a memory leak.
 * Added in warning to let people know when stubs are mismatching versions.
-* Added in warning when we cannot acquire an lpm global lock, and also made it so we do not lock upon running something.
+* Added in warning when we cannot acquire an ppm global lock, and also made it so we do not lock upon running something.
 * Better error handling for invalid manifests, specifically when paths for plugins don't exist.
 * Fixed issue with permissions not being recorded correctly when extracting from a zip file.
 * Added in --reinstall flag.
@@ -223,28 +223,28 @@
 
 # 1.0.0
 
-Initial release of `lpm`.
+Initial release of `ppm`.
 
 ```
-Usage: lpm COMMAND [...ARGUMENTS] [--json] [--userdir=directory]
+Usage: ppm COMMAND [...ARGUMENTS] [--json] [--userdir=directory]
   [--cachedir=directory] [--quiet] [--version] [--help] [--remotes]
   [--ssl-certs=directory/file] [--force] [--arch=x86_64-linux]
   [--assume-yes] [--no-install-optional] [--verbose] [--mod-version=3]
   [--datadir=directory] [--binary=path] [--symlink] [--post]
 
-LPM is a package manager for `lite-xl`, written in C (and packed-in lua).
+PPM is a package manager for `pragtical`, written in C (and packed-in lua).
 
 It's designed to install packages from our central github repository (and
-affiliated repositories), directly into your lite-xl user directory. It can
-be called independently, for from the lite-xl `addon_manager` addon.
+affiliated repositories), directly into your pragtical user directory. It can
+be called independently, for from the pragtical `addon_manager` addon.
 
-LPM will always use https://github.com/lite-xl/lite-xl-plugin-manager as its base
+PPM will always use https://github.com/pragtical/plugin-manager as its base
 repository, if none are present, and the cache directory does't exist,
 but others can be added, and this base one can be removed.
 
 It has the following commands:
 
-  lpm init [repo 1] [repo 2] [...]         Implicitly called before all commands
+  ppm init [repo 1] [repo 2] [...]         Implicitly called before all commands
                                            if necessary, but can be called
                                            independently to save time later, or
                                            to set things up differently.
@@ -258,74 +258,74 @@ It has the following commands:
                                            If "none" is specified, initializes
                                            an empty repository list.
 
-  lpm repo list                            List all extant repos.
-  lpm [repo] add <repository remote>       Add a source repository.
+  ppm repo list                            List all extant repos.
+  ppm [repo] add <repository remote>       Add a source repository.
     [...<repository remote>]
-  lpm [repo] rm <repository remote>        Remove a source repository.
+  ppm [repo] rm <repository remote>        Remove a source repository.
     [...<repository remote>]
-  lpm [repo] update [<repository remote>]  Update all/the specified repos.
+  ppm [repo] update [<repository remote>]  Update all/the specified repos.
     [...<repository remote>]
-  lpm [plugin|library|color] install       Install specific addons.
+  ppm [plugin|library|color] install       Install specific addons.
     <addon id>[:<version>]                 If installed, upgrades.
     [...<addon id>:<version>]
-  lpm [plugin|library|color] uninstall     Uninstall the specific addon.
+  ppm [plugin|library|color] uninstall     Uninstall the specific addon.
     <addon id> [...<addon id>]
-  lpm [plugin|library|color] reinstall     Uninstall and installs the specific addon.
+  ppm [plugin|library|color] reinstall     Uninstall and installs the specific addon.
    <addon id> [...<addon id>]
 
-  lpm [plugin|library|color] list          List all/associated addons.
+  ppm [plugin|library|color] list          List all/associated addons.
    <remote> [...<remote>]
 
-  lpm upgrade                              Upgrades all installed addons
+  ppm upgrade                              Upgrades all installed addons
                                            to new version if applicable.
-  lpm [lite-xl] install <version>          Installs lite-xl. Infers the
+  ppm [pragtical] install <version>          Installs pragtical. Infers the
     [binary] [datadir]                     paths on your system if not
                                            supplied. Automatically
                                            switches to be your system default
                                            if path auto inferred.
-  lpm lite-xl add <version> <path>         Adds a local version of lite-xl to
+  ppm pragtical add <version> <path>         Adds a local version of pragtical to
                                            the managed list, allowing it to be
                                            easily bottled.
-  lpm lite-xl remove <path>                Removes a local version of lite-xl
+  ppm pragtical remove <path>                Removes a local version of pragtical
                                            from the managed list.
-  lpm [lite-xl] switch <version> [<path>]  Sets the active version of lite-xl
+  ppm [pragtical] switch <version> [<path>]  Sets the active version of pragtical
                                            to be the specified version. Auto-detects
-                                           current install of lite-xl; if none found
+                                           current install of pragtical; if none found
                                            path can be specified.
-  lpm lite-xl list [name pattern]          Lists all installed versions of
-     [...filters]                          lite-xl. Can specify the flags listed
+  ppm pragtical list [name pattern]          Lists all installed versions of
+     [...filters]                          pragtical. Can specify the flags listed
                                            in the filtering seciton.
-  lpm run <version> [...addons]            Sets up a "bottle" to run the specified
-                                           lite version, with the specified addons
+  ppm run <version> [...addons]            Sets up a "bottle" to run the specified
+                                           pragtical version, with the specified addons
                                            and then opens it.
-  lpm describe [bottle]                    Describes the bottle specified in the form
+  ppm describe [bottle]                    Describes the bottle specified in the form
                                            of a list of commands, that allow someone
                                            else to run your configuration.
-  lpm table <manifest path> [readme path]  Formats a markdown table of all specified
+  ppm table <manifest path> [readme path]  Formats a markdown table of all specified
                                            addons. Dumps to stdout normally, but if
                                            supplied a readme, will remove all tables
                                            from the readme, and append the new one.
 
-  lpm purge                                Completely purge all state for LPM.
-  lpm -                                    Read these commands from stdin in
+  ppm purge                                Completely purge all state for PPM.
+  ppm -                                    Read these commands from stdin in
                                            an interactive print-eval loop.
-  lpm help                                 Displays this help text.
+  ppm help                                 Displays this help text.
 
 
 Flags have the following effects:
 
   --json                   Performs all communication in JSON.
-  --userdir=directory      Sets the lite-xl userdir manually.
-                           If omitted, uses the normal lite-xl logic.
+  --userdir=directory      Sets the pragtical userdir manually.
+                           If omitted, uses the normal pragtical logic.
   --cachedir=directory     Sets the directory to store all repositories.
   --tmpdir=directory       During install, sets the staging area.
   --datadir=directory      Sets the data directory where core addons are located
-                           for the system lite-xl.
-  --binary=path            Sets the lite-xl binary path for the system lite-xl.
+                           for the system pragtical.
+  --binary=path            Sets the pragtical binary path for the system pragtical.
   --verbose                Spits out more information, including intermediate
                            steps to install and whatnot.
   --quiet                  Outputs nothing but explicit responses.
-  --mod-version=version    Sets the mod version of lite-xl to install addons.
+  --mod-version=version    Sets the mod version of pragtical to install addons.
   --version                Returns version information.
   --help                   Displays this help text.
   --ssl-certs              Sets the SSL certificate store. Can be a directory,
@@ -375,12 +375,12 @@ in any circumstance unless explicitly supplied.
 There exist also other debug commands that are potentially useful, but are
 not commonly used publically.
 
-  lpm test [test file]               Runs the specified test suite.
-  lpm table <manifest> [...filters]  Generates markdown table for the given
+  ppm test [test file]               Runs the specified test suite.
+  ppm table <manifest> [...filters]  Generates markdown table for the given
                                      manifest. Used by repositories to build
                                      READMEs.
-  lpm download <url> [target]        Downloads the specified URL to stdout,
+  ppm download <url> [target]        Downloads the specified URL to stdout,
                                      or to the specified target file.
-  lpm extract <file.[tar.gz|zip]>    Extracts the specified archive at
+  ppm extract <file.[tar.gz|zip]>    Extracts the specified archive at
     [target]                         target, or the current working directory.
 ```
