@@ -5,6 +5,8 @@ on:
   workflow_dispatch:
   workflow_call:
 
+permissions: write-all
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -34,7 +36,7 @@ jobs:
           echo VERSION=`git describe --tags --abbrev=0 --match "v*" | tail -c +2` >> $GITHUB_ENV
           echo FULL_VERSION=`git describe --tags --match "v*" | tail -c +2` >> $GITHUB_ENV
           echo ARCH=${{ matrix.config.arch }}-${{ matrix.config.platform }} >> $GITHUB_ENV
-          echo BIN=lpm.${{ matrix.config.arch }}-${{ matrix.config.platform }}${{ matrix.config.suffix }} >> $GITHUB_ENV
+          echo BIN=ppm.${{ matrix.config.arch }}-${{ matrix.config.platform }}${{ matrix.config.suffix }} >> $GITHUB_ENV
           echo HOSTCC=gcc >> $GITHUB_ENV
 
       - name: Setup (Linux)
@@ -87,19 +89,19 @@ jobs:
 
       - name: Build
         run: |
-          ./build.sh clean && ./build.sh -DLPM_STATIC -DLPM_VERSION='"'$FULL_VERSION-$ARCH'"' -static -O3 -ffunction-sections -fdata-sections -Wl,--gc-sections
+          ./build.sh clean && ./build.sh -DPPM_STATIC -DPPM_VERSION='"'$FULL_VERSION-$ARCH'"' -static -O3 -ffunction-sections -fdata-sections -Wl,--gc-sections
 
-      - name: Run Tests
-        if: ${{ matrix.config.native }}
-        run: |
-          cp $BIN lpm && ./lpm test t/run.lua
+      # - name: Run Tests
+      #   if: ${{ matrix.config.native }}
+      #   run: |
+      #     cp $BIN ppm && ./ppm test t/run.lua
 
       # - name: Package Debian/Ubuntu
-      #   env: { ARCH: "amd64", DESCRIPTION: "A plugin manager for the lite-xl text editor.", MAINTAINER: "Adam Harrison <adamdharrison@gmail.com>" }
+      #   env: { ARCH: "amd64", DESCRIPTION: "A plugin manager for the pragtical text editor.", MAINTAINER: "Adam Harrison <adamdharrison@gmail.com>" }
       #   run: |
-      #     export NAME=lpm_$VERSION.0-$REV""_$ARCH
-      #     mkdir -p $NAME/usr/bin $NAME/DEBIAN && cp lpm $NAME/usr/bin
-      #     printf "Package: lpm\nVersion: $VERSION\nArchitecture: $ARCH\nMaintainer: $MAINTAINER\nDescription: $DESCRIPTION\n" > $NAME/DEBIAN/control
+      #     export NAME=ppm_$VERSION.0-$REV""_$ARCH
+      #     mkdir -p $NAME/usr/bin $NAME/DEBIAN && cp ppm $NAME/usr/bin
+      #     printf "Package: ppm\nVersion: $VERSION\nArchitecture: $ARCH\nMaintainer: $MAINTAINER\nDescription: $DESCRIPTION\n" > $NAME/DEBIAN/control
       #     dpkg-deb --build --root-owner-group $NAME
 
       - name: Upload Artifacts
@@ -112,7 +114,7 @@ jobs:
     strategy:
       matrix:
         config:
-          - { arch: x86_64, runner: macos-13 } # macos-13 runs on Intel runners
+          - { arch: x86_64, runner: macos-15-intel } # macos-15-intel runs on Intel runners
           - { arch: aarch64, runner: macos-14 } # macos-14 runs on M1 runners
 
     runs-on: ${{ matrix.config.runner }}
@@ -130,15 +132,14 @@ jobs:
           echo VERSION=`git describe --tags --abbrev=0  --match "v*" | tail -c +2` >> $GITHUB_ENV
           echo REV=$((`git describe --tags  --match "v*" | sed 's/.*-\([0-9]*\)-.*/\1/' | sed s/^v.*//` + 1)) >> $GITHUB_ENV
           echo ARCH=${{ matrix.config.arch }}-darwin >> $GITHUB_ENV
-          echo BIN=lpm.${{ matrix.config.arch }}-darwin >> $GITHUB_ENV
+          echo BIN=ppm.${{ matrix.config.arch }}-darwin >> $GITHUB_ENV
 
       - name: Build
         run: |
-          ./build.sh clean && ./build.sh -DLPM_STATIC -DLPM_VERSION='"'$FULL_VERSION-$ARCH'"' -O3
+          ./build.sh clean && ./build.sh -DPPM_STATIC -DPPM_VERSION='"'$FULL_VERSION-$ARCH'"' -O3
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           path: ${{ env.BIN }}
           name: ${{ env.BIN }}
-

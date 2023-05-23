@@ -1,6 +1,7 @@
-project('lpm',
+project('ppm',
     ['c'],
-    license : 'LPM',
+    license : 'PPM',
+    version : '1.2.0',
     meson_version : '>= 0.56',
 )
 
@@ -23,22 +24,22 @@ microtar_dep = declare_dependency(
     include_directories: ['lib/microtar/src']
 )
 
-lpm_source = files('src/lpm.c')
+ppm_source = files('src/ppm.c')
 cflags = []
 if get_option('static')
     lua_exe = find_program('lua')
 
-    lpm_source += configure_file(
+    ppm_source += configure_file(
         capture: false,
-        command: [lua_exe, '-e', 'f = string.dump(assert(load(io.lines("@INPUT0@", "L"), "=lpm.lua"))) io.open("@OUTPUT0@", "wb"):write("unsigned char lpm_luac[] = \"" .. f:gsub(".", function (c) return string.format("\\\x%02X",string.byte(c)) end) .. "\";unsigned int lpm_luac_len = " .. #f .. ";")'],
-        input: files('src/lpm.lua'),
-        output: 'lpm.lua.c'
+        command: [lua_exe, '-e', 'f = string.dump(assert(load(io.lines("@INPUT0@", "L"), "=ppm.lua"))) io.open("@OUTPUT0@", "wb"):write("unsigned char ppm_luac[] = \"" .. f:gsub(".", function (c) return string.format("\\\x%02X",string.byte(c)) end) .. "\";unsigned int ppm_luac_len = " .. #f .. ";")'],
+        input: files('src/ppm.lua'),
+        output: 'ppm.lua.c'
     )
-    cflags += '-DLPM_STATIC'
+    cflags += '-DPPM_STATIC'
 endif
 
-lpm_exe = executable('lpm',
-    lpm_source,
+ppm_exe = executable('ppm',
+    ppm_source,
     dependencies: [
         zlib_dep,
         lzma_dep,
@@ -53,11 +54,11 @@ lpm_exe = executable('lpm',
 )
 
 if (get_option('install_plugin'))
-    lite_datadir = get_option('lite_datadir')
-    if lite_datadir == ''
+    pragtical_datadir = get_option('pragtical_datadir')
+    if pragtical_datadir == ''
         # No path given, assume a default
-        lite_datadir = get_option('datadir') + '/lite-xl'
+        pragtical_datadir = get_option('datadir') + '/pragtical'
     endif
 
-    install_subdir('plugins', install_dir : lite_datadir)
+    install_subdir('plugins', install_dir : pragtical_datadir)
 endif

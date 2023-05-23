@@ -2,61 +2,62 @@
   "addons": [
     {
       "id": "plugin_manager",
-      "version": "0.1",
-      "description": "A GUI interface to Adam's lite-xl plugin manager.",
+      "version": "0.1.1",
+      "description": "A GUI interface to Adam's pragtical plugin manager.",
+      "type": "plugin",
       "path": "plugins/plugin_manager",
       "mod_version": 3,
       "files": [
         {
-          "url": "https://github.com/lite-xl/lite-xl-plugin-manager/releases/download/latest/lpm.x86_64-linux",
+          "url": "https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.x86_64-linux",
           "arch": "x86_64-linux",
           "checksum": "SKIP",
           "optional": true
         },
         {
-          "url": "https://github.com/lite-xl/lite-xl-plugin-manager/releases/download/latest/lpm.aarch64-linux",
+          "url": "https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.aarch64-linux",
           "arch": "aarch64-linux",
           "checksum": "SKIP",
           "optional": true
         },
         {
-          "url": "https://github.com/lite-xl/lite-xl-plugin-manager/releases/download/latest/lpm.x86_64-windows.exe",
+          "url": "https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.x86_64-windows.exe",
           "arch": "x86_64-windows",
           "checksum": "SKIP",
           "optional": true
         },
         {
-          "url": "https://github.com/lite-xl/lite-xl-plugin-manager/releases/download/latest/lpm.x86_64-darwin",
+          "url": "https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.x86_64-darwin",
           "arch": "x86_64-darwin",
           "checksum": "SKIP",
           "optional": true
         },
         {
-          "url": "https://github.com/lite-xl/lite-xl-plugin-manager/releases/download/latest/lpm.aarch64-darwin",
+          "url": "https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.aarch64-darwin",
           "arch": "aarch64-darwin",
           "checksum": "SKIP",
           "optional": true
         },
         {
-          "url": "https://github.com/lite-xl/lite-xl-plugin-manager/releases/download/latest/lpm.aarch64-android",
+          "url": "https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.aarch64-android",
           "arch": "aarch64-android",
           "checksum": "SKIP",
           "optional": true
         },
         {
-          "url": "https://github.com/lite-xl/lite-xl-plugin-manager/releases/download/latest/lpm.arm-android",
+          "url": "https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.arm-android",
           "arch": "arm-android",
           "checksum": "SKIP",
           "optional": true
         },
         {
-          "url": "https://github.com/lite-xl/lite-xl-plugin-manager/releases/download/latest/lpm.x86-android",
+          "url": "https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.x86-android",
           "arch": "x86-android",
           "checksum": "SKIP",
           "optional": true
         },
         {
-          "url": "https://github.com/lite-xl/lite-xl-plugin-manager/releases/download/latest/lpm.x86_64-android",
+          "url": "https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.x86_64-android",
           "arch": "x86_64-android",
           "checksum": "SKIP",
           "optional": true
@@ -68,7 +69,7 @@
     },
     {
       "id": "welcome",
-      "description": "A welcome screen for lite-xl, that on first start, invites a user to install the meta_addons package, or access the plugin manager.",
+      "description": "A welcome screen for pragtical, that on first start, invites a user to install the meta_addons package, or access the plugin manager.",
       "type": "plugin",
       "path": "plugins/welcome.lua",
       "version": "0.1",
@@ -84,9 +85,9 @@
       "path": "libraries/json.lua"
     }
   ],
-  "lite-xls": [],
+  "pragticals": [],
   "remotes": [
-    "https://github.com/lite-xl/lite-xl-plugins.git:master",
-    "https://github.com/lite-xl/lite-xl-colors.git:master"
+    "https://github.com/pragtical/plugins.git:master",
+    "https://github.com/pragtical/colors.git:master"
   ]
 }
