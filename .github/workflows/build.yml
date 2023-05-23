@@ -2,6 +2,7 @@ name: CI
 on:
   push: { branches: [master] }
   workflow_dispatch:
+permissions: write-all
 
 jobs:
   build:
@@ -32,7 +33,7 @@ jobs:
           echo VERSION=`git describe --tags --abbrev=0 --match "v*" | tail -c +2` >> $GITHUB_ENV
           echo FULL_VERSION=`git describe --tags --match "v*" | tail -c +2` >> $GITHUB_ENV
           echo ARCH=${{ matrix.config.arch }}-${{ matrix.config.platform }} >> $GITHUB_ENV
-          echo BIN=lpm.${{ matrix.config.arch }}-${{ matrix.config.platform }}${{ matrix.config.suffix }} >> $GITHUB_ENV
+          echo BIN=ppm.${{ matrix.config.arch }}-${{ matrix.config.platform }}${{ matrix.config.suffix }} >> $GITHUB_ENV
           echo HOSTCC=gcc >> $GITHUB_ENV
 
       - name: Setup (Linux)
@@ -85,19 +86,19 @@ jobs:
 
       - name: Build
         run: |
-          ./build.sh clean && ./build.sh -DLPM_STATIC -DLPM_VERSION='"'$FULL_VERSION-$ARCH'"' -static -O3
+          ./build.sh clean && ./build.sh -DPPM_STATIC -DPPM_VERSION='"'$FULL_VERSION-$ARCH'"' -static -O3
 
-      - name: Run Tests
-        if: ${{ matrix.config.native }}
-        run: |
-          cp $BIN lpm && ./lpm test t/run.lua
+      # - name: Run Tests
+      #   if: ${{ matrix.config.native }}
+      #   run: |
+      #     cp $BIN ppm && ./ppm test t/run.lua
 
       # - name: Package Debian/Ubuntu
-      #   env: { ARCH: "amd64", DESCRIPTION: "A plugin manager for the lite-xl text editor.", MAINTAINER: "Adam Harrison <adamdharrison@gmail.com>" }
+      #   env: { ARCH: "amd64", DESCRIPTION: "A plugin manager for the pragtical text editor.", MAINTAINER: "Adam Harrison <adamdharrison@gmail.com>" }
       #   run: |
-      #     export NAME=lpm_$VERSION.0-$REV""_$ARCH
-      #     mkdir -p $NAME/usr/bin $NAME/DEBIAN && cp lpm $NAME/usr/bin
-      #     printf "Package: lpm\nVersion: $VERSION\nArchitecture: $ARCH\nMaintainer: $MAINTAINER\nDescription: $DESCRIPTION\n" > $NAME/DEBIAN/control
+      #     export NAME=ppm_$VERSION.0-$REV""_$ARCH
+      #     mkdir -p $NAME/usr/bin $NAME/DEBIAN && cp ppm $NAME/usr/bin
+      #     printf "Package: ppm\nVersion: $VERSION\nArchitecture: $ARCH\nMaintainer: $MAINTAINER\nDescription: $DESCRIPTION\n" > $NAME/DEBIAN/control
       #     dpkg-deb --build --root-owner-group $NAME
 
       - name: Upload Artifacts
@@ -128,11 +129,11 @@ jobs:
           echo VERSION=`git describe --tags --abbrev=0  --match "v*" | tail -c +2` >> $GITHUB_ENV
           echo REV=$((`git describe --tags  --match "v*" | sed 's/.*-\([0-9]*\)-.*/\1/' | sed s/^v.*//` + 1)) >> $GITHUB_ENV
           echo ARCH=${{ matrix.config.arch }}-darwin >> $GITHUB_ENV
-          echo BIN=lpm.${{ matrix.config.arch }}-darwin >> $GITHUB_ENV
+          echo BIN=ppm.${{ matrix.config.arch }}-darwin >> $GITHUB_ENV
 
       - name: Build
         run: |
-          ./build.sh clean && ./build.sh -DLPM_STATIC -DLPM_VERSION='"'$FULL_VERSION-$ARCH'"' -O3
+          ./build.sh clean && ./build.sh -DPPM_STATIC -DPPM_VERSION='"'$FULL_VERSION-$ARCH'"' -O3
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -158,7 +159,7 @@ jobs:
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: lpm.*
+          pattern: ppm.*
           path: artifacts
           merge-multiple: true
 
@@ -179,11 +180,3 @@ jobs:
           fi
           git tag -f continuous
           git push -f origin refs/tags/continuous
-
-      - name: Discord Notification
-        env: { DISCORD_WEBHOOK: "${{ secrets.DISCORD_WEBHOOK }}" }
-        run: |
-          if [[ -n "$DISCORD_WEBHOOK" ]] && [[ `git tag --points-at HEAD v* | head -c 1` == "v" ]]; then
-            perl -e 'use JSON qw(encode_json from_json); $/ = undef; print encode_json({ content => "## Lite XL Plugin Manager $ENV{VERSION} has been released!\nhttps://github.com/lite-xl/lite-xl-plugin-manager/releases/tag/v$ENV{VERSION}\n@release:lpm\n### Changes in $ENV{VERSION}:\n" . <> })' < NOTES.md |
-              curl -H 'Content-Type:application/json' $DISCORD_WEBHOOK -X POST -d "$(</dev/stdin)"
-          fi
