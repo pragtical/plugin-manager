@@ -100,6 +100,26 @@ function PluginView:on_mouse_pressed(button, mx, my, clicks)
       x = x + self.widths[i] + style.padding.x
     end
   end
+  if
+    mx < self.position.x or mx > self.position.x + self.size.x
+    or
+    my < self.position.y or my > self.position.y + self.size.y
+  then
+    return false
+  end
+  if button == "left" and clicks == 1 and self.hovered_plugin then
+    self.selected_plugin, self.selected_plugin_idx = self.hovered_plugin, self.hovered_plugin_idx
+    return true
+  elseif button == "left" and clicks == 2 and self.selected_plugin then
+    local status = self.selected_plugin.status
+    if status == "available" then
+      self:install(self.selected_plugin)
+      return true
+    elseif status == "installed" or status == "orphan" or status == "bundled" then
+      self:uninstall(self.selected_plugin)
+      return true
+    end
+  end
   return false
 end
 
@@ -451,11 +471,9 @@ keymap.add {
   ["pageup"]      = "plugin-manager:scroll-page-up",
   ["home"]        = "plugin-manager:scroll-page-top",
   ["end"]         = "plugin-manager:scroll-page-bottom",
-  ["lclick"]      = "plugin-manager:select",
   ["ctrl+f"]      = "plugin-manager:filter",
   ["ctrl+r"]      = "plugin-manager:refresh-all",
   ["ctrl+u"]      = "plugin-manager:upgrade-all",
-  ["2lclick"]     = { "plugin-manager:install-selected", "plugin-manager:uninstall-selected" },
   ["return"]      = { "plugin-manager:install-selected", "plugin-manager:uninstall-selected" },
   ["escape"]      = "plugin-manager:clear-filter",
 }
