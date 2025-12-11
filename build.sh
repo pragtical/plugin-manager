@@ -39,7 +39,7 @@ CMAKE_DEFAULT_FLAGS=" $CMAKE_DEFAULT_FLAGS -DCMAKE_PREFIX_PATH=`pwd`/lib/prefix 
 mkdir -p lib/prefix/include lib/prefix/lib
 if [[ "$@" != *"-lz"* ]]; then
   [ ! -e "lib/zlib" ] && echo "Make sure you've cloned submodules. (git submodule update --init --depth=1)" && exit -1
-  [[ ! -e "lib/zlib/build" ]] && { cd lib/zlib && mkdir build && cd build && $CC $COMPILE_FLAGS -D_LARGEFILE64_SOURCE -I.. ../*.c -c && $AR rc libz.a *.o && cp libz.a ../../prefix/lib && cp ../*.h ../../prefix/include && cd ../../../ || exit -1; }
+  [[ ! -e "lib/zlib/build" ]] && { cd lib/zlib && mkdir build && cd build && $CC $COMPILE_FLAGS -DHAVE_FDOPEN -D_LARGEFILE64_SOURCE -I.. ../*.c -c && $AR rc libz.a *.o && cp libz.a ../../prefix/lib && cp ../*.h ../../prefix/include && cd ../../../ || exit -1; }
   LINK_FLAGS="$LINK_FLAGS -lz"
 fi
 if [[ "$@" != *"-llzma"* ]]; then
