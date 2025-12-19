@@ -601,22 +601,15 @@ cli.register {
         )
         os.exit(exit_code or 0)
       else
-        -- compatibility with pragtical.com binary under Windows
-        local cmd = '"' .. config.plugins.plugin_manager.ppm_binary_path .. '" '
-          .. '--assume-yes '
-          .. '--userdir="'..USERDIR..'" '
-          .. '--binary="'..EXEFILE..'" '
-          .. table.concat(ARGS, " ", start)
-        local pm = process.start(cmd)
-        if pm then
-          repeat
-            local out = pm:read_stdout()
-            local err = pm:read_stderr()
-            if out then io.stdout:write(out) end
-            if err then io.stderr:write(err) end
-          until not pm:running()
-          os.exit(pm:returncode() or 1)
-        end
+        -- handle arguments on windows
+        local exit_code = os.execute(
+          string.format(
+            'cmd /c ""%s" --userdir="%s" --binary="%s" %s"',
+            config.plugins.plugin_manager.ppm_binary_path,
+            USERDIR, EXEFILE, table.concat(ARGS, " ", start)
+          )
+        )
+        os.exit(exit_code or 0)
       end
     end
   end
