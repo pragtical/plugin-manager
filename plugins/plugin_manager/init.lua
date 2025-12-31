@@ -488,7 +488,7 @@ command.add(nil, {
         local items = {}
         if not PluginManager.addons then return end
         for i, addon in ipairs(PluginManager.addons) do
-          if not addon.mod_version or tostring(addon.mod_version) == tostring(MOD_VERSION) and addon.status == "available" then
+          if not addon.mod_version or tostring(addon.mod_version) == tostring(rawget(_G, "MOD_VERSION_MAJOR") or rawget(_G, "MOD_VERSION")) and addon.status == "available" then
             table.insert(items, addon.id .. ":" .. addon.version)
           end
         end

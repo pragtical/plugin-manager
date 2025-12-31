@@ -2,7 +2,7 @@
   "addons": [
     {
       "id": "plugin_manager",
-      "version": "0.1.1",
+      "version": "0.1.1.2",
       "description": "A GUI interface to Adam's pragtical plugin manager.",
       "type": "plugin",
       "path": "plugins/plugin_manager",
