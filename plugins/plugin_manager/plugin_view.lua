@@ -44,6 +44,36 @@ function PluginView:new()
   plugin_view = self
 end
 
+function PluginView:get_state()
+  return {
+    sort = self.sort,
+    selected_plugin_idx = self.selected_plugin_idx,
+    scroll = {
+      x = self.scroll.x,
+      y = self.scroll.y,
+      to = { x = self.scroll.to.x, y = self.scroll.to.y }
+    },
+  }
+end
+
+function PluginView.from_state(state)
+  local pv = PluginView()
+  pv.sort = state.sort
+  pv.scroll = state.scroll
+  core.add_thread(function()
+    while not pv.initialized do
+      coroutine.yield(0.3)
+    end
+    local offset = state.selected_plugin_idx
+    if offset > 0 then
+      pv.selected_plugin = pv:get_sorted_plugins()[offset]
+      pv.selected_plugin_idx = offset
+      core.redraw = true
+    end
+  end)
+  return pv
+end
+
 local function get_plugin_text(plugin)
   return (plugin.name or plugin.id), (plugin.status == "core" and VERSION or plugin.version), plugin.type, plugin.status, join(", ", plugin.tags), plugin.author or "unknown", plugin.description-- (plugin.description or ""):gsub("%[[^]+%]%([^)]+%)", "")
 end
