@@ -64,7 +64,7 @@ function PluginView.from_state(state)
     while not pv.initialized do
       coroutine.yield(0.3)
     end
-    local offset = state.selected_plugin_idx
+    local offset = state.selected_plugin_idx or 0
     if offset > 0 then
       pv.selected_plugin = pv:get_sorted_plugins()[offset]
       pv.selected_plugin_idx = offset
