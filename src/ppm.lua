@@ -1397,7 +1397,7 @@ function Repository:add(pull_remotes, force_update)
   local manifest, remotes = self:parse_manifest()
   if pull_remotes then -- any remotes we don't have in our listing, call add, and add into the list
     for i, remote in ipairs(remotes) do
-      if common.first(repositories, function(repo) return repo.remote == remote.remote and repo.branch == remote.branch and repo.commit == remote.commit end) then
+      if not common.first(repositories, function(repo) return repo.remote == remote.remote and repo.branch == remote.branch and repo.commit == remote.commit end) then
         remote:add(pull_remotes == "recursive" and "recursive" or false)
         table.insert(repositories, remote)
       end
@@ -1778,7 +1778,7 @@ function Bottle:all_addons()
             table.insert(t, Addon.new(nil, {
               id = id,
               type = (translations[addon_type] or "plugin"),
-              location = (i == 2 and (hash[id] and "bundled" or "core")) or "user",
+              location = (i == 2 and (CORE_PLUGINS[id] and "core" or "bundled")) or "user",
               organization = (v:find("%.lua$") and "singleton" or "complex"),
               local_path = path,
               mod_version = self.pragtical.mod_version,
