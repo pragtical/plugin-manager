@@ -626,6 +626,10 @@ end
 function log.progress_action(message)
   if write_progress_bar then
     progress_bar_label = message
+    if JSON and PROGRESS then
+      io.stdout:write(json.encode({ progress = { percent = 0, label = progress_bar_label } }) .. "\n")
+      io.stdout:flush()
+    end
   else
     log.action(message)
   end
@@ -796,6 +800,7 @@ function Addon:unstub()
   if not self:is_stub() or self.inaccessible then return end
   local repo
   local status, err = pcall(function()
+    local stub_version = self.version
     repo = Repository.url(self.remote):fetch_if_not_present()
     local manifest = repo:parse_manifest(self.id)
     local remote_entry = common.grep(manifest['addons'] or manifest['plugins'], function(e) return e.id == self.id end)[1]
@@ -806,6 +811,9 @@ function Addon:unstub()
     if addon.version ~= self.version then log.warning(self.id .. " stub on " .. self.repository:url() .. " has differing version from remote (" .. self.version .. " vs " .. addon.version .. "); may lead to install being inconsistent") end
     -- if addon.mod_version ~= self.mod_version then log.warning(self.id .. " stub on " .. self.repository:url() .. " has differing mod_version from remote (" .. self.mod_version .. " vs " .. addon.mod_version .. ")") end
     for k,v in pairs(addon) do self[k] = v end
+    if repo.branch and stub_version and self.version and compare_version(self.version, stub_version) < 0 then
+      self.available_version = stub_version
+    end
   end)
   if not status then self.inaccessible = err end
   return repo
@@ -818,9 +826,9 @@ function Addon.is_addon_different(downloaded_path, installed_path)
   return common.is_path_different(downloaded_path, target)
 end
 
-function Addon:get_install_path(bottle)
+function Addon:get_install_path_at(root)
   local folder = self.type == "library" and "libraries" or (self.type .. "s")
-  local path = (((self:is_core(bottle) or self:is_bundled()) and bottle.pragtical.datadir_path) or (bottle.local_path and (bottle.local_path .. PATHSEP .. "user") or USERDIR)) .. PATHSEP .. folder
+  local path = root .. PATHSEP .. folder
   if self:is_asset() and self.organization == "singleton" then
     if (self.path or self.url) and common.basename(self.path or self.url):gsub("%.%w+$", "") ~= self.id then
       log.warning(string.format("Mistmatch between asset url/path filename and id; (%s vs. %s)", self.path or self.url, self.id))
@@ -833,9 +841,25 @@ function Addon:get_install_path(bottle)
   return path
 end
 
+function Addon:get_install_path(bottle)
+  local root = ((self:is_core(bottle) or self:is_bundled()) and bottle.pragtical.datadir_path) or (bottle.local_path and (bottle.local_path .. PATHSEP .. "user") or USERDIR)
+  return self:get_install_path_at(root)
+end
+
+function Addon:get_bundled_path(bottle)
+  return self:get_install_path_at(bottle.pragtical.datadir_path)
+end
+
 function Addon:is_orphan(bottle) return not self.repository end
 function Addon:is_core(bottle) return self.location == "core" end
 function Addon:is_bundled(bottle) return self.location == "bundled" end
+function Addon:is_satisfied_by_bundled(bottle)
+  if self:is_bundled(bottle) then return true end
+  if not self.repository or not self.local_path then return false end
+  if system.stat(self:get_install_path(bottle)) then return false end
+  local bundled_path = self:get_bundled_path(bottle)
+  return system.stat(bundled_path) and not Addon.is_addon_different(self.local_path, bundled_path)
+end
 function Addon:is_installed(bottle)
   if self:is_core(bottle) or self:is_bundled(bottle) or not self.repository then return true end
   if self.type == "meta" then
@@ -848,17 +872,17 @@ function Addon:is_installed(bottle)
     return true
   end
   local install_path = self:get_install_path(bottle)
-  if not system.stat(install_path) then return false end
+  if not system.stat(install_path) then return self:is_satisfied_by_bundled(bottle) end
   if self:is_asset() then return true end
   local installed_addons = common.grep({ bottle:get_addon(self.id, nil, {  }) }, function(addon) return not addon.repository end)
-  if #installed_addons > 0 then return false end
+  if #common.grep(installed_addons, function(addon) return not addon:is_core(bottle) and not addon:is_bundled(bottle) end) > 0 then return false end
   return self.local_path and not Addon.is_addon_different(self.local_path, install_path)
 end
 function Addon:is_upgradable(bottle)
   if self:is_installed(bottle) then
     local addons = { bottle:get_addon(self.id) }
     for i, v in ipairs(addons) do
-      if self.version and v.version and v ~= self and compare_version(self.version, v.version) <= 1 then
+      if v.repository and self.version and v.version and v ~= self and compare_version(self.version, v.version) < 0 then
         return true
       end
     end
@@ -872,6 +896,7 @@ function Addon:is_incompatible(addon)
 end
 
 function Addon:get_path(bottle)
+  if self:is_satisfied_by_bundled(bottle) then return self:get_bundled_path(bottle) end
   return self:is_installed(bottle) and self:get_install_path(bottle) or self.local_path
 end
 
@@ -1004,6 +1029,7 @@ function Addon:install(bottle, installing)
                 local is_archive = basename:find("%.zip$") or basename:find("%.tar%.gz$") or basename:find("%.tgz$")
                 local target = temporary_path
                 if is_archive or basename:find("%.gz$") then
+                  log.progress_action("Extracting " .. basename .. "...")
                   if VERBOSE then log.action("Extracting file " .. basename .. " in " .. install_path .. "...") end
                   target = temporary_install_path .. (not is_archive and (PATHSEP .. basename:gsub(".gz$", "")) or "")
                   system.extract(temporary_path, target)
@@ -1074,7 +1100,7 @@ function Addon:get_orphaned_dependencies(bottle, uninstalling)
     local dependency = common.grep({ bottle:get_addon(id, options.version) }, function(e) return e.type == "meta" or e:is_installed(bottle) end)[1]
     if dependency then
       if  #common.grep(installed_addons, function(addon) return addon ~= self and addon:depends_on(dependency) and not uninstalling[addon.id] end) == 0
-      and not ( dependency:is_explicitly_installed(bottle) or dependency:is_core(bottle) )
+      and not ( dependency:is_explicitly_installed(bottle) or dependency:is_core(bottle) or dependency:is_satisfied_by_bundled(bottle) )
       then
         table.insert(t, dependency)
         uninstalling[dependency.id] = true
@@ -1090,6 +1116,7 @@ function Addon:uninstall(bottle, uninstalling)
   if MASK[self.id] then if not uninstalling[self.id] then log.warning("won't uninstall masked addon " .. self.id) end uninstalling[self.id] = true return end
   local install_path = self:get_install_path(bottle)
   if self:is_core(bottle) then error("can't uninstall " .. self.id .. "; is a core addon") end
+  if self:is_satisfied_by_bundled(bottle) then error("can't uninstall " .. self.id .. "; is a bundled addon") end
   local orphans = common.sort(common.grep(self:get_orphaned_dependencies(bottle), function(e) return not uninstalling or not uninstalling[e.id] end), function(a, b) return a.id < b.id end)
   -- debate about this being a full abort, vs. just not uninstalling the orphans; settled in favour of full abort. can be revisited.
   if #orphans > 0 and not uninstalling and not prompt("Uninstalling " .. self.id .. " will uninstall the following orphans: " .. common.join(", ", common.map(orphans, function(e) return e.id end)).. ". Do you want to continue?") then
@@ -1370,7 +1397,7 @@ function Repository:add(pull_remotes, force_update)
   local manifest, remotes = self:parse_manifest()
   if pull_remotes then -- any remotes we don't have in our listing, call add, and add into the list
     for i, remote in ipairs(remotes) do
-      if not common.first(repositories, function(repo) return repo.remote == remote.remote and repo.branch == remote.branch and repo.commit == remote.commit end) then
+      if common.first(repositories, function(repo) return repo.remote == remote.remote and repo.branch == remote.branch and repo.commit == remote.commit end) then
         remote:add(pull_remotes == "recursive" and "recursive" or false)
         table.insert(repositories, remote)
       end
@@ -1398,7 +1425,7 @@ function Repository:update(pull_remotes)
   end
   if pull_remotes then -- any remotes we don't have in our listing, call add, and add into the list
     for i, remote in ipairs(remotes) do
-      if common.first(repositories, function(repo) return repo.remote == remote.remote and repo.branch == remote.branch and repo.commit == remote.commit end) then
+      if not common.first(repositories, function(repo) return repo.remote == remote.remote and repo.branch == remote.branch and repo.commit == remote.commit end) then
         remote:add(pull_remotes == "recursive" and "recursive" or false)
         table.insert(repositories, remote)
       end
@@ -1502,6 +1529,7 @@ function Pragtical:install(arch)
         common.get(file.url, { target = path, checksum = file.checksum, callback = write_progress_bar })
         log.action("Downloaded file " .. file.url .. " to " .. path)
         if archive then
+          log.progress_action("Extracting " .. basename .. "...")
           log.action("Extracting file " .. basename .. " in " .. self.local_path)
           system.extract(path, self.local_path)
           -- because this is a pragtical archive binary, we should expect to find a `pragtical` folder, containing the pragtical binary, and a data directory
@@ -1723,6 +1751,7 @@ function Bottle:all_addons()
   if self.all_addons_cache then return self.all_addons_cache end
   local t, hash = get_repository_addons()
   for _, addon_type in ipairs({ "plugins", "libraries", "fonts", "colors" }) do
+    local user_addons = {}
     local addon_paths = {
       (self.local_path and (self.local_path .. PATHSEP .. "user") or USERDIR) .. PATHSEP .. addon_type,
       self.pragtical.datadir_path .. PATHSEP .. addon_type
@@ -1732,13 +1761,14 @@ function Bottle:all_addons()
         for j, v in ipairs(system.ls(addon_path)) do
           local id = common.handleize(v:gsub("%.lua$", ""))
           local path = addon_path .. PATHSEP .. v
+          if i == 1 then user_addons[id] = true end
           -- in the case where we have an existing plugin that targets a stub, then fetch that repository
           local fetchable = hash[id] and common.grep(hash[id], function(e) return e:is_stub() end)[1]
           if fetchable then fetchable:unstub() end
           local matching = hash[id] and common.grep(hash[id], function(e)
             return e.local_path and not Addon.is_addon_different(e.local_path, path)
           end)[1]
-          if i == 2 or not hash[id] or not matching then
+          if (i ~= 2 or not user_addons[id]) and (not hash[id] or not matching) then
             local translations = {
               plugins = "plugin",
               libraries = "library",
@@ -1961,6 +1991,15 @@ end
 
 function ppm.update(...)
   ppm.repo_update(...)
+  local updated_remotes = {}
+  for _, repo in ipairs(repositories) do
+    for _, addon in ipairs(repo.addons or {}) do
+      if addon.remote and system.stat(addon:get_install_path(system_bottle)) and not updated_remotes[addon.remote] then
+        Repository.url(addon.remote):add(false, true)
+        updated_remotes[addon.remote] = true
+      end
+    end
+  end
   -- check to see if any files without checksums have changed if we can HEAD them and determine if they've been updated since we last
   for _, pragtical in ipairs(get_pragticals()) do
     if pragtical:is_installed() and not pragtical:is_local() then
@@ -2374,6 +2413,27 @@ local function get_table(headers, rows, options)
   return table.concat(strs, "\n")
 end
 
+local function get_addon_status(addon)
+  if addon:is_satisfied_by_bundled(system_bottle) then
+    return "bundled"
+  elseif addon.repository then
+    if addon:is_installed(system_bottle) then
+      if addon.available_version and compare_version(addon.version, addon.available_version) < 0 then
+        return "upgradable"
+      end
+      return "installed"
+    end
+    return system_bottle.pragtical:is_compatible(addon) and "available" or "incompatible"
+  elseif addon:is_bundled(system_bottle) then
+    return "bundled"
+  elseif addon:is_core(system_bottle) then
+    return "core"
+  elseif addon:is_upgradable(system_bottle) then
+    return "upgradable"
+  end
+  return "orphan"
+end
+
 local function print_addon_info(type, addons, filters)
   local max_id = 4
   local plural = (type or "addon") .. "s"
@@ -2385,12 +2445,16 @@ local function print_addon_info(type, addons, filters)
     elseif addon.url then url = addon.url
     elseif addon.path and addon.path:find(".lua$") then url = string.format("%s?raw=1", addon.path)
     elseif addon.path then url = addon.path end
+    local status = get_addon_status(addon)
     local hash = {
       id = addon.id,
-      status = addon.repository and (addon:is_installed(system_bottle) and "installed" or (system_bottle.pragtical:is_compatible(addon) and "available" or "incompatible")) or (addon:is_bundled(system_bottle) and "bundled" or (addon:is_core(system_bottle) and "core" or (addon:is_upgradable(system_bottle) and "upgradable" or "orphan"))),
+      status = status,
       stub = (addon:is_stub() and "git" or false),
       name = addon.name or addon.id,
       version = "" .. addon.version,
+      version_display = addon.available_version and (addon.version .. " -> " .. addon.available_version) or ("" .. addon.version),
+      installed_version = addon.available_version and addon.version or nil,
+      available_version = addon.available_version,
       dependencies = addon.dependencies,
       remote = addon.remote,
       description = addon.description,
@@ -2480,8 +2544,18 @@ function ppm.addon_uninstall(type, ...)
   for i, id in ipairs({ ... }) do
     local addons = { system_bottle:get_addon(id, nil, { type = type }) }
     if #addons == 0 then error("can't find addon " .. id) end
-    local installed_addons = common.grep(addons, function(e) return e:is_installed(system_bottle) and not e:is_core(system_bottle) end)
-    if #installed_addons == 0 then error("addon " .. id .. " not installed") end
+    local installed_addons = common.grep(addons, function(e) return e:is_installed(system_bottle) and not e:is_core(system_bottle) and not e:is_satisfied_by_bundled(system_bottle) end)
+    if #installed_addons == 0 then
+      local bundled_addon = common.grep(addons, function(e) return e:is_satisfied_by_bundled(system_bottle) end)[1]
+      if bundled_addon and bundled_addon:is_explicitly_installed(system_bottle) then
+        log.action("Unmarking bundled " .. bundled_addon.type .. " " .. bundled_addon.id .. " as explicitly installed.", "green")
+        settings.installed = common.grep(settings.installed, function(e) return e ~= bundled_addon.id end)
+      elseif bundled_addon then
+        log.action("No user-installed " .. bundled_addon.type .. " " .. bundled_addon.id .. " to uninstall.", "green")
+      else
+        error("addon " .. id .. " not installed")
+      end
+    end
     for i, addon in ipairs(installed_addons) do
       addon:uninstall(system_bottle)
       settings.installed = common.grep(settings.installed, function(e) return e ~= addon.id end)

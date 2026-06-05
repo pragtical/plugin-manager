@@ -35,10 +35,10 @@ config.plugins.plugin_manager = common.merge({
 
 if not config.plugins.plugin_manager.ppm_binary_path then
   local paths = {
-    DATADIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. config.plugins.plugin_manager.ppm_binary_name,
     USERDIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. config.plugins.plugin_manager.ppm_binary_name,
-    DATADIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. "ppm" .. binary_extension,
     USERDIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. "ppm" .. binary_extension,
+    DATADIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. config.plugins.plugin_manager.ppm_binary_name,
+    DATADIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. "ppm" .. binary_extension,
   }
   local path, s = os.getenv("PATH"), 1
   while true do
@@ -81,11 +81,24 @@ if config.plugins.plugin_manager.force then table.insert(default_arguments, "--f
 local function extract_progress(chunk)
   local newline = chunk:find("\n")
   if not newline then return nil, chunk end
-  if #chunk == newline then
-    if chunk:find("^{\"progress\"") then return chunk, "" end
-    return nil, chunk
+  local line = chunk:sub(1, newline - 1)
+  if line:find("^{\"progress\"") then
+    return line, chunk:sub(newline + 1)
   end
-  return chunk:sub(1, newline - 1), chunk:sub(newline + 1)
+  return nil, chunk
+end
+
+local function drain_progress(chunk, options)
+  while true do
+    local progress_line
+    progress_line, chunk = extract_progress(chunk)
+    if not progress_line then break end
+    if options.progress then
+      progress_line = json.decode(progress_line)
+      options.progress(progress_line.progress)
+    end
+  end
+  return chunk
 end
 
 local function run(cmd, options)
@@ -110,28 +123,22 @@ local function run(cmd, options)
         while i < #running_processes + 1 do
           local v = running_processes[i]
           local still_running = true
-          local progress_line
           while true do
             local chunk = v[1]:read_stdout(2048)
             if config.plugins.plugin_manager.debug and chunk ~= nil then io.stdout:write(chunk) io.stdout:flush() end
             if chunk and #chunk == 0 then break end
             if chunk ~= nil and #chunk > 0 then
               v[3] = v[3] .. chunk
-              progress_line, v[3] = extract_progress(v[3])
-              if options.progress and progress_line then
-                progress_line = json.decode(progress_line)
-                options.progress(progress_line.progress)
-              end
+              v[3] = drain_progress(v[3], options)
               has_chunk = true
             else
               still_running = false
+              v[3] = drain_progress(v[3], options)
               if v[1]:returncode() == 0 then
-                progress_line, v[3] = extract_progress(v[3])
                 v[2]:resolve(v[3])
               else
                 local err = v[1]:read_stderr(2048)
                 core.error("error running " .. join(" ", cmd) .. ": " .. (err or "?"))
-                progress_line, v[3] = extract_progress(v[3])
                 if err then
                   v[2]:reject(json.decode(err).error)
                 else
@@ -166,12 +173,18 @@ function PluginManager:refresh(options)
     self.addons = json.decode(addons)["addons"]
     table.sort(self.addons, function(a,b) return a.id < b.id end)
     self.valid_addons = {}
+    local special_addons = {}
     for i, addon in ipairs(self.addons) do
-      if addon.status ~= "incompatible" then
+      if (addon.id == "plugin_manager" or addon.id == "json") and (addon.status == "installed" or addon.status == "orphan" or addon.status == "upgradable") then
+        addon.status = "special"
+        special_addons[addon.id] = true
+      end
+    end
+    for i, addon in ipairs(self.addons) do
+      if special_addons[addon.id] and addon.status ~= "special" then
+        -- Hide repository candidates for protected addons managed by the UI itself.
+      elseif addon.status ~= "incompatible" then
         table.insert(self.valid_addons, addon)
-        if (addon.id == "plugin_manager" or addon.id == "json") and (addon.status == "installed" or addon.status == "orphan") then
-          addon.status = "special"
-        end
       end
     end
     self.last_refresh = os.time()
@@ -186,15 +199,32 @@ end
 
 
 function PluginManager:upgrade(options)
+  options = options or {}
   local prom = Promise.new()
+  if options.progress then options.progress({ label = "Checking for plugin updates...", percent = 0 }) end
   run({ "update" }, options):done(function()
+    if options.progress then options.progress({ label = "Upgrading installed plugins...", percent = 0 }) end
     run({ "upgrade" }, options):done(function()
-      prom:resolve()
-    end)
-  end)
+      if (options.restart == nil and config.plugins.plugin_manager.restart_on_change) or options.restart then
+        command.perform("core:restart")
+      else
+        self:refresh(options):forward(prom)
+      end
+    end):fail(function(arg) prom:reject(arg) end)
+  end):fail(function(arg) prom:reject(arg) end)
   return prom
 end
 
+
+function PluginManager:check_for_updates(options)
+  options = options or {}
+  local prom = Promise.new()
+  if options.progress then options.progress({ label = "Checking for plugin updates...", percent = 0 }) end
+  run({ "repo", "update" }, options):done(function()
+    self:refresh(options):forward(prom)
+  end):fail(function(arg) prom:reject(arg) end)
+  return prom
+end
 
 
 function PluginManager:purge(options)
@@ -215,7 +245,15 @@ function PluginManager:get_addons(options)
 end
 
 local function run_stateful_plugin_command(plugin_manager, cmd, args, options)
+  options = options or {}
   local promise = Promise.new()
+  if options.progress then
+    local labels = {
+      install = args[#args] == "--reinstall" and "Reinstalling plugin..." or "Installing plugin...",
+      uninstall = "Uninstalling plugin..."
+    }
+    options.progress({ label = labels[cmd] or "Applying plugin changes...", percent = 0 })
+  end
   run({ cmd, table.unpack(args) }, options):done(function(result)
     if (options.restart == nil and config.plugins.plugin_manager.restart_on_change) or options.restart then
       command.perform("core:restart")
@@ -230,15 +268,32 @@ end
 
 
 function PluginManager:install(addon, options) return run_stateful_plugin_command(self, "install", { addon.id .. (addon.version and (":" .. addon.version) or "") }, options) end
+function PluginManager:upgrade_addon(addon, options)
+  options = options or {}
+  local promise = Promise.new()
+  if options.progress then options.progress({ label = "Checking for plugin updates...", percent = 0 }) end
+  run({ "update" }, options):done(function()
+    local version = addon.available_version or addon.version
+    run_stateful_plugin_command(self, "install", { addon.id .. (version and (":" .. version) or "") }, options):forward(promise)
+  end):fail(function(arg) promise:reject(arg) end)
+  return promise
+end
 function PluginManager:reinstall(addon, options) return run_stateful_plugin_command(self, "install", { addon.id .. (addon.version and (":" .. addon.version) or ""), "--reinstall" }, options) end
 function PluginManager:uninstall(addon, options) return run_stateful_plugin_command(self, "uninstall", { addon.id }, options) end
 function PluginManager:unstub(addon, options)
+  options = options or {}
   local promise = Promise.new()
   if addon.path and system.get_file_info(addon.path) then
     promise:resolve(addon)
   else
+    if options.progress then options.progress({ label = "Fetching plugin source...", percent = 0 }) end
     run({ "unstub", addon.id }, options):done(function(result)
-      local unstubbed_addon = json.decode(result).addons[1]
+      local decoded = json.decode(result)
+      local unstubbed_addon = decoded and decoded.addons and decoded.addons[1]
+      if type(unstubbed_addon) ~= "table" then
+        promise:reject("can't find source for " .. addon.id)
+        return
+      end
       for k,v in pairs(unstubbed_addon) do addon[k] = v end
       promise:resolve(addon)
     end):fail(function(arg) promise:reject(arg) end)
@@ -550,6 +605,11 @@ command.add(nil, {
     )
   end,
   ["plugin-manager:refresh"] = function() PluginManager:refresh({ progress = PluginManager.view.progress_callback }):done(function() core.log("Successfully refreshed plugin listing.") end) end,
+  ["plugin-manager:check-for-updates"] = function()
+    local view = core.active_view and core.active_view:is(PluginManager.view) and core.active_view
+    local action = view and view:check_for_updates() or PluginManager:check_for_updates({})
+    action:done(function() core.log("Successfully checked for plugin updates.") end)
+  end,
   ["plugin-manager:upgrade"] = function() PluginManager:upgrade({ progress = PluginManager.view.progress_callback }):done(function() core.log("Successfully upgraded installed plugins.") end) end,
   ["plugin-manager:purge"] = function() PluginManager:purge({ progress = PluginManager.view.progress_callback }):done(function() core.log("Successfully purged ppm directory.") end) end,
   ["plugin-manager:show"] = function()
@@ -595,6 +655,8 @@ cli.register {
       if PLATFORM ~= "Windows" then
         local exit_code = os.execute(
           '"' .. config.plugins.plugin_manager.ppm_binary_path .. '" '
+          .. '--mod-version="'..(rawget(_G, "MOD_VERSION") or MOD_VERSION_STRING)..'" '
+          .. '--datadir="'..DATADIR..'" '
           .. '--userdir="'..USERDIR..'" '
           .. '--binary="'..EXEFILE..'" '
           .. table.concat(ARGS, " ", start)
@@ -606,7 +668,7 @@ cli.register {
           string.format(
             'cmd /c ""%s" --userdir="%s" --binary="%s" %s"',
             config.plugins.plugin_manager.ppm_binary_path,
-            USERDIR, EXEFILE, table.concat(ARGS, " ", start)
+            USERDIR, EXEFILE, '--mod-version="'..(rawget(_G, "MOD_VERSION") or MOD_VERSION_STRING)..'" --datadir="'..DATADIR..'" '..table.concat(ARGS, " ", start)
           )
         )
         os.exit(exit_code or 0)

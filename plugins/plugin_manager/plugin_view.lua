@@ -75,7 +75,9 @@ function PluginView.from_state(state)
 end
 
 local function get_plugin_text(plugin)
-  return (plugin.name or plugin.id), (plugin.status == "core" and VERSION or plugin.version), plugin.type, plugin.status, join(", ", plugin.tags), plugin.author or "unknown", plugin.description-- (plugin.description or ""):gsub("%[[^]+%]%([^)]+%)", "")
+  local name = plugin.name or plugin.id
+  if plugin.id and name ~= plugin.id then name = name .. " (" .. plugin.id .. ")" end
+  return name, (plugin.status == "core" and VERSION or (plugin.version_display or plugin.version)), plugin.type, plugin.status, join(", ", plugin.tags), plugin.author or "unknown", plugin.description-- (plugin.description or ""):gsub("%[[^]+%]%([^)]+%)", "")
 end
 
 
@@ -117,7 +119,7 @@ function PluginView:on_mouse_pressed(button, mx, my, clicks)
   local lh = style.font:get_height() + style.padding.y
   local x = self:get_content_offset() + style.padding.x
 
-  local column_headers_y = self.position.y + (self.filter_text and lh or 0)
+  local column_headers_y = self.position.y + (self.filter_text and self.filter_text ~= "" and lh or 0)
 
   if my > column_headers_y and my <= column_headers_y + lh then
     for i, _ in ipairs(self.plugin_table_columns) do
@@ -144,6 +146,9 @@ function PluginView:on_mouse_pressed(button, mx, my, clicks)
     local status = self.selected_plugin.status
     if status == "available" then
       self:install(self.selected_plugin)
+      return true
+    elseif status == "upgradable" then
+      self:upgrade_plugin(self.selected_plugin)
       return true
     elseif status == "installed" or status == "orphan" or status == "bundled" then
       self:uninstall(self.selected_plugin)
@@ -182,7 +187,16 @@ function PluginView:refresh(no_refetch, on_complete)
       for j = 1, #self.widths do
         self.widths[j] = math.max(style.font:get_width(t[j] or ""), self.widths[j])
       end
-      if not self.filter_text or self.filter_text == "" or string.ulower(t[1]):ufind(self.filter_text, 1, true) then
+      local filter_text = self.filter_text and string.ulower(self.filter_text)
+      local plugin_id = plugin.id and string.ulower(plugin.id)
+      local plugin_tags = t[5] and string.ulower(t[5])
+      if
+        not filter_text
+        or filter_text == ""
+        or string.ulower(t[1]):ufind(filter_text, 1, true)
+        or (plugin_id and plugin_id:ufind(filter_text, 1, true))
+        or (plugin_tags and plugin_tags:ufind(filter_text, 1, true))
+      then
         table.insert(self.sorted_plugins, plugin)
         self.sorted_plugins[plugin] = t
       end
@@ -239,6 +253,19 @@ local function draw_loading_bar(x, y, width, height, percent)
   renderer.draw_rect(x, y, width * percent, height, style.caret)
 end
 
+local function get_status_color(status)
+  if status == "installed" or status == "bundled" or status == "orphan" then
+    return style.good
+  elseif status == "upgradable" then
+    return style.accent
+  elseif status == "core" then
+    return style.warn
+  elseif status == "special" then
+    return style.modified
+  end
+  return style.text
+end
+
 function PluginView:draw_loading_screen(label, percent)
   common.draw_text(style.big_font, style.dim, "Loading...", "center", self.position.x, self.position.y, self.size.x, self.size.y)
   local width = self.size.x / 2
@@ -249,6 +276,15 @@ function PluginView:draw_loading_screen(label, percent)
     common.draw_text(style.font, style.dim, label, "center", self.position.x, self.position.y + offset_y + lh, self.size.x, lh)
     draw_loading_bar(self.position.x + (self.size.x / 2) - (width / 2), self.position.y + self.size.y / 2 + (lh * 2), width, lh, percent)
   end
+end
+
+function PluginView:draw_progress_strip(progress)
+  local th = style.font:get_height()
+  local lh = th + style.padding.y
+  local y = self.position.y + self.size.y - lh
+  renderer.draw_rect(self.position.x, y, self.size.x, lh, style.line_highlight)
+  draw_loading_bar(self.position.x, y, self.size.x, 2, progress.percent or 0)
+  common.draw_text(style.font, style.text, progress.label or "Working...", "left", self.position.x + style.padding.x, y, self.size.x - style.padding.x * 2, lh)
 end
 
 function PluginView:draw()
@@ -290,10 +326,7 @@ function PluginView:draw()
       end
       x = x + style.padding.x
       for j, v in ipairs(sorted_plugins[plugin]) do
-        local color = (plugin.status == "installed" or plugin.status == "bundled" or plugin.status == "orphan") and style.good or
-          (plugin.status == "core" and style.warn or
-          (plugin.status == "special" and style.modified or style.text)
-        )
+        local color = get_status_color(plugin.status)
         if self.loading then color = mul(color, style.dim) end
         common.draw_text(style.font, color, v, "left", x, y, self.widths[j], lh)
         x = x + self.widths[j] + style.padding.x
@@ -302,17 +335,24 @@ function PluginView:draw()
     oy = oy + lh
   end
 
-  if self.loading and self.progress then
-    draw_loading_bar(self.position.x, self.position.y, self.size.x, 2, self.progress.percent)
-  end
-
   core.pop_clip_rect()
+  if self.loading and self.progress then
+    self:draw_progress_strip(self.progress)
+  end
   PluginView.super.draw_scrollbar(self)
 end
 
 function PluginView:install(plugin)
   self.loading = true
   return self.plugin_manager:install(plugin, { progress = self.progress_callback }):done(function()
+    self.loading = false
+    self.selected_plugin, plugin_view.selected_plugin_idx = nil, nil
+  end)
+end
+
+function PluginView:upgrade_plugin(plugin)
+  self.loading = true
+  return self.plugin_manager:upgrade_addon(plugin, { progress = self.progress_callback }):done(function()
     self.loading = false
     self.selected_plugin, plugin_view.selected_plugin_idx = nil, nil
   end)
@@ -331,6 +371,8 @@ function PluginView:unstub(plugin)
   self.loading = true
   return self.plugin_manager:unstub(plugin, { progress = self.progress_callback }):done(function()
     self.loading = false
+  end):fail(function()
+    self.loading = false
   end)
 end
 
@@ -348,6 +390,15 @@ function PluginView:upgrade()
   return self.plugin_manager:upgrade({ progress = self.progress_callback }):done(function()
     self.loading = false
     self.selected_plugin, plugin_view.selected_plugin_idx = nil, nil
+  end)
+end
+
+function PluginView:check_for_updates()
+  self.loading = true
+  return self.plugin_manager:check_for_updates({ progress = self.progress_callback }):done(function()
+    self.loading = false
+    self.selected_plugin, plugin_view.selected_plugin_idx = nil, nil
+    self:refresh(true)
   end)
 end
 
@@ -430,6 +481,9 @@ command.add(PluginView, {
   ["plugin-manager:refresh-all"] = function() -- Separate command from `refresh`, because we want to only have the keycombo be valid on the plugin view screen.
     plugin_view:refresh():done(function() core.log("Successfully refreshed plugin listing.") end)
   end,
+  ["plugin-manager:check-for-updates"] = function()
+    plugin_view:check_for_updates():done(function() core.log("Successfully checked for plugin updates.") end)
+  end,
   ["plugin-manager:upgrade-all"] = function()
     plugin_view:upgrade():done(function() core.log("Successfully upgraded installed plugins.") end)
   end
@@ -445,18 +499,33 @@ end, {
   ["plugin-manager:install-hovered"] = function() plugin_view:install(plugin_view.hovered_plugin) end
 })
 command.add(function()
-  return core.active_view and core.active_view:is(PluginView) and plugin_view.selected_plugin and (plugin_view.selected_plugin.status == "installed" or plugin_view.selected_plugin.status == "orphan" or plugin_view.selected_plugin.status == "bundled")
+  return core.active_view and core.active_view:is(PluginView) and plugin_view.selected_plugin and plugin_view.selected_plugin.status == "upgradable"
+end, {
+  ["plugin-manager:upgrade-selected"] = function() plugin_view:upgrade_plugin(plugin_view.selected_plugin) end
+})
+command.add(function()
+  return core.active_view and core.active_view:is(PluginView) and plugin_view.hovered_plugin and plugin_view.hovered_plugin.status == "upgradable"
+end, {
+  ["plugin-manager:upgrade-hovered"] = function() plugin_view:upgrade_plugin(plugin_view.hovered_plugin) end
+})
+command.add(function()
+  return core.active_view and core.active_view:is(PluginView) and plugin_view.selected_plugin and (plugin_view.selected_plugin.status == "installed" or plugin_view.selected_plugin.status == "orphan" or plugin_view.selected_plugin.status == "bundled" or plugin_view.selected_plugin.status == "upgradable")
 end, {
   ["plugin-manager:uninstall-selected"] = function() plugin_view:uninstall(plugin_view.selected_plugin) end
 })
 command.add(function()
-  return core.active_view and core.active_view:is(PluginView) and plugin_view.hovered_plugin and (plugin_view.hovered_plugin.status == "installed" or plugin_view.hovered_plugin.status == "orphan" or plugin_view.hovered_plugin.status == "bundled")
+  return core.active_view and core.active_view:is(PluginView) and plugin_view.hovered_plugin and (plugin_view.hovered_plugin.status == "installed" or plugin_view.hovered_plugin.status == "orphan" or plugin_view.hovered_plugin.status == "bundled" or plugin_view.hovered_plugin.status == "upgradable")
 end, {
   ["plugin-manager:uninstall-hovered"] = function() plugin_view:uninstall(plugin_view.hovered_plugin) end,
   ["plugin-manager:reinstall-hovered"] = function() plugin_view:reinstall(plugin_view.hovered_plugin) end
 })
-command.add(function()
+local function has_hovered_plugin()
   return core.active_view and core.active_view:is(PluginView) and plugin_view.hovered_plugin
+end
+
+command.add(function()
+  local plugin = has_hovered_plugin()
+  return plugin and plugin.type ~= "font"
 end, {
   ["plugin-manager:view-source-hovered"] = function()
     plugin_view:unstub(plugin_view.hovered_plugin):done(function(plugin)
@@ -470,7 +539,12 @@ end, {
       end
       if not opened then core.error("Can't find source for plugin.") end
     end)
-  end,
+  end
+})
+command.add(function()
+  local plugin = has_hovered_plugin()
+  return plugin and plugin.type ~= "font"
+end, {
   ["plugin-manager:view-readme-hovered"] = function()
     plugin_view:unstub(plugin_view.hovered_plugin):done(function(plugin)
       local opened = false
@@ -504,18 +578,20 @@ keymap.add {
   ["ctrl+f"]      = "plugin-manager:filter",
   ["ctrl+r"]      = "plugin-manager:refresh-all",
   ["ctrl+u"]      = "plugin-manager:upgrade-all",
-  ["return"]      = { "plugin-manager:install-selected", "plugin-manager:uninstall-selected" },
+  ["return"]      = { "plugin-manager:install-selected", "plugin-manager:upgrade-selected", "plugin-manager:uninstall-selected" },
   ["escape"]      = "plugin-manager:clear-filter",
 }
 
 
 PluginView.menu:register(function() return core.active_view:is(PluginView) end, {
   { text = "Install", command = "plugin-manager:install-hovered" },
+  { text = "Upgrade", command = "plugin-manager:upgrade-hovered" },
   { text = "Uninstall", command = "plugin-manager:uninstall-hovered" },
   { text = "View Source", command = "plugin-manager:view-source-hovered" },
   { text = "View README", command = "plugin-manager:view-readme-hovered" },
   ContextMenu.DIVIDER,
   { text = "Refresh Listing", command = "plugin-manager:refresh-all" },
+  { text = "Check for Updates", command = "plugin-manager:check-for-updates" },
   { text = "Upgrade All", command = "plugin-manager:upgrade-all" },
 })
 
