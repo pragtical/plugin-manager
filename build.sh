@@ -52,7 +52,7 @@ if [[ "$@" != *"-DPPM_NO_NETWORK"* && "$@" != *"-lmbedtls"* && "$@" != *"-lmbedc
 fi
 if [[ "$@" != *"-DPPM_NO_GIT"* && "$@" != *"-lgit2"* ]]; then
   [[ "$@" != *"-DPPM_NO_NETWORK"* ]] && USE_HTTPS="mbedTLS" || USE_HTTPS="OFF"
-  [ ! -e "lib/libgit2/build" ] && { cd lib/libgit2 && mkdir build && cd build && cmake .. -G "Unix Makefiles" $GIT2_CONFIGURE $CMAKE_DEFAULT_FLAGS -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_C_STANDARD=99 -DBUILD_TESTS=OFF -DBUILD_CLI=OFF -DBUILD_SHARED_LIBS=OFF -DREGEX_BACKEND=builtin -DUSE_SSH=OFF -DUSE_HTTPS=$USE_HTTPS && $MAKE -j $JOBS && $MAKE install && cd ../../../ || exit -1; }
+  [ ! -e "lib/libgit2/build" ] && { cd lib/libgit2 && mkdir build && cd build && cmake .. -G "Unix Makefiles" $GIT2_CONFIGURE $CMAKE_DEFAULT_FLAGS -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_C_STANDARD=99 -DBUILD_TESTS=OFF -DBUILD_CLI=OFF -DBUILD_SHARED_LIBS=OFF -DREGEX_BACKEND=builtin -DUSE_SSH=OFF -DUSE_HTTPS=$USE_HTTPS -DUSE_NTLMCLIENT=OFF && $MAKE -j $JOBS && $MAKE install && cd ../../../ || exit -1; }
   LINK_FLAGS="-lgit2 $LINK_FLAGS"
 fi
 if [[ "$@" != *"-lzip"* ]]; then
