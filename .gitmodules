@@ -18,7 +18,6 @@
 [submodule "lib/mbedtls"]
 	path = lib/mbedtls
 	url = https://github.com/Mbed-TLS/mbedtls.git
-	shallow = true
 [submodule "lib/xz"]
 	path = lib/xz
 	url = https://github.com/tukaani-project/xz.git

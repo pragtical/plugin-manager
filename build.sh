@@ -47,7 +47,7 @@ if [[ "$@" != *"-llzma"* ]]; then
   LINK_FLAGS="$LINK_FLAGS -llzma"
 fi
 if [[ "$@" != *"-DPPM_NO_NETWORK"* && "$@" != *"-lmbedtls"* && "$@" != *"-lmbedcrypto"* && "$@" != *"-lmbedx509"* ]]; then
-  [ ! -e "lib/mbedtls/build" ] && { cd lib/mbedtls && python3 -c "import jsonschema, jinja2" 2>/dev/null || pip install --break-system-packages --quiet -r scripts/basic.requirements.txt 2>/dev/null || { echo "Please install python-jsonschema and python-jinja2 to build mbedtls 4.x"; exit 1; }; mkdir build && cd build && CFLAGS="$COMPILE_FLAGS $CFLAGS_MBEDTLS -DMBEDTLS_DEBUG_C -w" cmake .. $CMAKE_DEFAULT_FLAGS  -G "Unix Makefiles" -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF $SSL_CONFIGURE && CFLAGS="$COMPILE_FLAGS $CFLAGS_MBEDTLS -w" $MAKE -j $JOBS && $MAKE install && cd ../../../ || exit -1; }
+  [ ! -e "lib/mbedtls/build" ] && { cd lib/mbedtls && git submodule update --init --recursive; python3 -c "import jsonschema, jinja2" 2>/dev/null || pip install --break-system-packages --quiet -r scripts/basic.requirements.txt 2>/dev/null || { echo "Please install python-jsonschema and python-jinja2 to build mbedtls 4.x"; exit 1; }; mkdir build && cd build && CFLAGS="$COMPILE_FLAGS $CFLAGS_MBEDTLS -DMBEDTLS_DEBUG_C -w" cmake .. $CMAKE_DEFAULT_FLAGS  -G "Unix Makefiles" -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF $SSL_CONFIGURE && CFLAGS="$COMPILE_FLAGS $CFLAGS_MBEDTLS -w" $MAKE -j $JOBS && $MAKE install && cd ../../../ || exit -1; }
   LINK_FLAGS="$LINK_FLAGS -lmbedtls -lmbedx509 -lmbedcrypto"
 fi
 if [[ "$@" != *"-DPPM_NO_GIT"* && "$@" != *"-lgit2"* ]]; then
