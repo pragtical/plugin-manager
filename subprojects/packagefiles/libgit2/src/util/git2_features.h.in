@@ -1,0 +1,79 @@
+#ifndef INCLUDE_features_h__
+#define INCLUDE_features_h__
+
+#mesondefine GIT_DEBUG_POOL
+#mesondefine GIT_DEBUG_STRICT_ALLOC
+#mesondefine GIT_DEBUG_STRICT_OPEN
+
+#mesondefine GIT_THREADS
+#mesondefine GIT_WIN32_LEAKCHECK
+
+#mesondefine GIT_ARCH_64
+#mesondefine GIT_ARCH_32
+
+#mesondefine GIT_USE_ICONV
+#mesondefine GIT_USE_NSEC
+#mesondefine GIT_USE_STAT_MTIM
+#mesondefine GIT_USE_STAT_MTIMESPEC
+#mesondefine GIT_USE_STAT_MTIME_NSEC
+#mesondefine GIT_USE_FUTIMENS
+
+#mesondefine GIT_REGEX_REGCOMP_L
+#mesondefine GIT_REGEX_REGCOMP
+#mesondefine GIT_REGEX_PCRE
+#mesondefine GIT_REGEX_PCRE2
+#mesondefine GIT_REGEX_BUILTIN
+
+#mesondefine GIT_QSORT_BSD
+#mesondefine GIT_QSORT_GNU
+#mesondefine GIT_QSORT_C11
+#mesondefine GIT_QSORT_MSC
+
+#mesondefine GIT_SSH
+#mesondefine GIT_SSH_EXEC
+#mesondefine GIT_SSH_LIBSSH2
+#mesondefine GIT_SSH_LIBSSH2_MEMORY_CREDENTIALS
+
+#mesondefine GIT_NTLM
+#mesondefine GIT_GSSAPI
+#mesondefine GIT_GSSFRAMEWORK
+
+#mesondefine GIT_WINHTTP
+#mesondefine GIT_HTTPS
+#mesondefine GIT_OPENSSL
+#mesondefine GIT_OPENSSL_DYNAMIC
+#mesondefine GIT_SECURE_TRANSPORT
+#mesondefine GIT_MBEDTLS
+#mesondefine GIT_SCHANNEL
+
+#mesondefine GIT_HTTPPARSER_HTTPPARSER
+#mesondefine GIT_HTTPPARSER_LLHTTP
+#mesondefine GIT_HTTPPARSER_BUILTIN
+
+#mesondefine GIT_SHA1_COLLISIONDETECT
+#mesondefine GIT_SHA1_WIN32
+#mesondefine GIT_SHA1_COMMON_CRYPTO
+#mesondefine GIT_SHA1_OPENSSL
+#mesondefine GIT_SHA1_OPENSSL_FIPS
+#mesondefine GIT_SHA1_OPENSSL_DYNAMIC
+#mesondefine GIT_SHA1_MBEDTLS
+
+#mesondefine GIT_SHA256_BUILTIN
+#mesondefine GIT_SHA256_WIN32
+#mesondefine GIT_SHA256_COMMON_CRYPTO
+#mesondefine GIT_SHA256_OPENSSL
+#mesondefine GIT_SHA256_OPENSSL_FIPS
+#mesondefine GIT_SHA256_OPENSSL_DYNAMIC
+#mesondefine GIT_SHA256_MBEDTLS
+
+#mesondefine GIT_COMPRESSION_BUILTIN
+#mesondefine GIT_COMPRESSION_ZLIB
+
+#mesondefine GIT_RAND_GETENTROPY
+#mesondefine GIT_RAND_GETLOADAVG
+
+#mesondefine GIT_IO_POLL
+#mesondefine GIT_IO_WSAPOLL
+#mesondefine GIT_IO_SELECT
+
+#endif

@@ -1,3 +1,7 @@
 option('static', type : 'boolean', value : false, description: 'Build the pre-packaged lua file into the executable.')
 option('install_plugin', type : 'boolean', value : false, description: 'Install the Pragtical plugin for ppm')
 option('pragtical_datadir', type : 'string', value : '', description: 'Path to the Pragtical data directory, usually \'share/pragtical\'')
+option('release_version', type : 'string', value : '', description: 'Release version used by package builds.')
+option('full_version', type : 'string', value : '', description: 'Full version string embedded in ppm.')
+option('target_arch', type : 'string', value : '', description: 'Target architecture suffix embedded in ppm.')
+option('binary_name', type : 'string', value : '', description: 'Output binary base name without platform executable suffix.')

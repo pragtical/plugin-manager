@@ -1,0 +1,55 @@
+/* config.h for Meson builds */
+
+#mesondefine HAVE_DIRENT_H
+#mesondefine HAVE_SYS_STAT_H
+#mesondefine HAVE_SYS_TYPES_H
+#mesondefine HAVE_UNISTD_H
+#mesondefine HAVE_WINDOWS_H
+#mesondefine HAVE_STDINT_H
+#mesondefine HAVE_INTTYPES_H
+
+#mesondefine HAVE_TYPE_TRAITS_H
+#mesondefine HAVE_BITS_TYPE_TRAITS_H
+
+#mesondefine HAVE_BCOPY
+#mesondefine HAVE_MEMMOVE
+#mesondefine HAVE_STRERROR
+#mesondefine HAVE_STRTOLL
+#mesondefine HAVE_STRTOQ
+#mesondefine HAVE__STRTOI64
+
+#mesondefine PCRE_STATIC
+
+#mesondefine SUPPORT_PCRE8
+#mesondefine SUPPORT_PCRE16
+#mesondefine SUPPORT_PCRE32
+#mesondefine SUPPORT_JIT
+#mesondefine SUPPORT_PCREGREP_JIT
+#mesondefine SUPPORT_UTF
+#mesondefine SUPPORT_UCP
+#mesondefine EBCDIC
+#mesondefine EBCDIC_NL25
+#mesondefine BSR_ANYCRLF
+#mesondefine NO_RECURSE
+
+#mesondefine HAVE_LONG_LONG
+#mesondefine HAVE_UNSIGNED_LONG_LONG
+
+#mesondefine SUPPORT_LIBBZ2
+#mesondefine SUPPORT_LIBZ
+#mesondefine SUPPORT_LIBEDIT
+#mesondefine SUPPORT_LIBREADLINE
+
+#mesondefine SUPPORT_VALGRIND
+#mesondefine SUPPORT_GCOV
+
+#define NEWLINE @NEWLINE@
+#define POSIX_MALLOC_THRESHOLD @PCRE_POSIX_MALLOC_THRESHOLD@
+#define LINK_SIZE @PCRE_LINK_SIZE@
+#define PARENS_NEST_LIMIT @PCRE_PARENS_NEST_LIMIT@
+#define MATCH_LIMIT @PCRE_MATCH_LIMIT@
+#define MATCH_LIMIT_RECURSION @PCRE_MATCH_LIMIT_RECURSION@
+#define PCREGREP_BUFSIZE @PCREGREP_BUFSIZE@
+
+#define MAX_NAME_SIZE 32
+#define MAX_NAME_COUNT 10000

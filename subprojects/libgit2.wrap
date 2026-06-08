@@ -5,4 +5,4 @@ depth = 1
 patch_directory = libgit2
 
 [provide]
-libgit2 = libgit2package_dep
+libgit2 = libgit2_dep

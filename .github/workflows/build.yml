@@ -35,61 +35,87 @@ jobs:
         run: |
           echo VERSION=`git describe --tags --abbrev=0 --match "v*" | tail -c +2` >> $GITHUB_ENV
           echo FULL_VERSION=`git describe --tags --match "v*" | tail -c +2` >> $GITHUB_ENV
-          echo ARCH=${{ matrix.config.arch }}-${{ matrix.config.platform }} >> $GITHUB_ENV
+          echo TARGET_ARCH=${{ matrix.config.arch }}-${{ matrix.config.platform }} >> $GITHUB_ENV
+          echo BIN_BASE=ppm.${{ matrix.config.arch }}-${{ matrix.config.platform }} >> $GITHUB_ENV
           echo BIN=ppm.${{ matrix.config.arch }}-${{ matrix.config.platform }}${{ matrix.config.suffix }} >> $GITHUB_ENV
           echo HOSTCC=gcc >> $GITHUB_ENV
+
+      - name: Setup Meson
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config
 
       - name: Setup (Linux)
         if: ${{ matrix.config.platform == 'linux' && matrix.config.native }}
         run: |
-          sudo apt-get update && sudo apt-get install musl-tools musl musl-dev
+          sudo apt-get install -y musl-tools musl musl-dev
           echo CC=musl-gcc >> $GITHUB_ENV
 
       - name: Setup (Linux cross-compilation)
         if: ${{ matrix.config.platform == 'linux' && ! matrix.config.native }}
         run: |
+          sudo apt-get install -y xz-utils
           wget -q https://github.com/cross-tools/musl-cross/releases/download/20250520/${{ matrix.config.arch }}-unknown-linux-musl.tar.xz
           unxz ${{ matrix.config.arch }}-unknown-linux-musl.tar.xz && tar -xvf *.tar
-          echo CC=$(pwd)/${{ matrix.config.arch }}-unknown-linux-musl/bin/${{ matrix.config.arch }}-unknown-linux-musl-cc >> $GITHUB_ENV
-          echo AR=$(pwd)/${{ matrix.config.arch }}-unknown-linux-musl/bin/${{ matrix.config.arch }}-unknown-linux-musl-ar >> $GITHUB_ENV
+          echo "$(pwd)/${{ matrix.config.arch }}-unknown-linux-musl/bin" >> $GITHUB_PATH
 
       - name: Setup (Windows)
         if: ${{ matrix.config.platform == 'windows' }}
         run: |
-          sudo apt-get update && sudo apt-get install mingw-w64
-          CMAKE_DEFAULT_FLAGS=(
-            "-DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER"
-            "-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=NEVER" "-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=NEVER"
-            "-DCMAKE_POSITION_INDEPENDENT_CODE=ON" "-DCMAKE_SYSTEM_NAME=Windows"
-            "-DCMAKE_SYSTEM_INCLUDE_PATH=/usr/share/mingw-w64/include"
-          )
-          echo "CMAKE_DEFAULT_FLAGS=${CMAKE_DEFAULT_FLAGS[*]}" >> $GITHUB_ENV
-          echo "LZMA_CONFIGURE=--host=x86_64-w64-mingw32" >> $GITHUB_ENV
-          echo "GIT2_CONFIGURE=-DDLLTOOL=x86_64-w64-mingw32-dlltool" >> $GITHUB_ENV
-          echo CC=x86_64-w64-mingw32-gcc >> $GITHUB_ENV
-          echo AR=x86_64-w64-mingw32-gcc-ar >> $GITHUB_ENV
-          echo WINDRES=x86_64-w64-mingw32-windres >> $GITHUB_ENV
+          sudo apt-get install -y mingw-w64
 
       - name: Setup (Android)
         if: ${{ matrix.config.platform == 'android' }}
         env: { ANDROID_ABI_VERSION: "26" }
         run: |
           LLVM_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          CMAKE_DEFAULT_FLAGS=(
-            "-DCMAKE_ANDROID_NDK=$ANDROID_NDK_HOME"
-            "-DCMAKE_ANDROID_API=$ANDROID_ABI_VERSION" "-DCMAKE_SYSTEM_VERSION=$ANDROID_ABI_VERSION"
-            "-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=NEVER" "-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=NEVER"
-            "-DCMAKE_SYSTEM_NAME=Android" "-DCMAKE_SYSTEM_INCLUDE_PATH=$ANDROID_SYSROOT_NDK/sysroot/usr/include"
-            "-DCMAKE_ANDROID_ARCH_ABI=${{ matrix.config.abi }}"
-          )
-          echo "CMAKE_DEFAULT_FLAGS=${CMAKE_DEFAULT_FLAGS[*]}" >> $GITHUB_ENV
-          echo "AR=$LLVM_BIN/llvm-ar" >> $GITHUB_ENV
-          echo "CC=$LLVM_BIN/${{ matrix.config.llvm }}-linux-android${{ matrix.config.eabi }}$ANDROID_ABI_VERSION-clang" >> $GITHUB_ENV
-          echo "CFLAGS=-Dinline=" >> $GITHUB_ENV
+          echo "$LLVM_BIN" >> $GITHUB_PATH
 
       - name: Build
         run: |
-          ./build.sh clean && ./build.sh -DPPM_STATIC -DPPM_VERSION='"'$FULL_VERSION-$ARCH'"' -static -O3 -ffunction-sections -fdata-sections -Wl,--gc-sections
+          MESON_CROSS_ARGS=()
+          MESON_C_ARGS="-ffunction-sections -fdata-sections"
+
+          case "$TARGET_ARCH" in
+            aarch64-linux)
+              MESON_CROSS_ARGS=(--cross-file=cross/aarch64-linux-musl.ini)
+              ;;
+            riscv64-linux)
+              MESON_CROSS_ARGS=(--cross-file=cross/riscv64-linux-musl.ini)
+              ;;
+            x86_64-windows)
+              MESON_CROSS_ARGS=(--cross-file=cross/x86_64-w64-mingw32.ini)
+              ;;
+            arm-android)
+              MESON_CROSS_ARGS=(--cross-file=cross/armv7a-linux-androideabi.ini)
+              MESON_C_ARGS="-Dinline= $MESON_C_ARGS"
+              ;;
+            aarch64-android)
+              MESON_CROSS_ARGS=(--cross-file=cross/aarch64-linux-android.ini)
+              MESON_C_ARGS="-Dinline= $MESON_C_ARGS"
+              ;;
+            x86_64-android)
+              MESON_CROSS_ARGS=(--cross-file=cross/x86_64-linux-android.ini)
+              MESON_C_ARGS="-Dinline= $MESON_C_ARGS"
+              ;;
+            x86-android)
+              MESON_CROSS_ARGS=(--cross-file=cross/i686-linux-android.ini)
+              MESON_C_ARGS="-Dinline= $MESON_C_ARGS"
+              ;;
+          esac
+
+          meson setup build-ci \
+            --buildtype=release \
+            --wrap-mode=forcefallback \
+            -Dstatic=true \
+            -Drelease_version="$VERSION" \
+            -Dfull_version="$FULL_VERSION" \
+            -Dtarget_arch="$TARGET_ARCH" \
+            -Dbinary_name="$BIN_BASE" \
+            -Dc_args="$MESON_C_ARGS" \
+            -Dc_link_args="-Wl,--gc-sections" \
+            "${MESON_CROSS_ARGS[@]}"
+          meson compile -C build-ci
 
       # - name: Run Tests
       #   if: ${{ matrix.config.native }}
@@ -107,7 +133,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          path: ${{ env.BIN }}
+          path: build-ci/${{ env.BIN }}
           name: ${{ env.BIN }}
 
   build-macos:
@@ -130,17 +156,31 @@ jobs:
       - name: Set Environment Variables
         run: |
           echo VERSION=`git describe --tags --abbrev=0  --match "v*" | tail -c +2` >> $GITHUB_ENV
+          echo FULL_VERSION=`git describe --tags --match "v*" | tail -c +2` >> $GITHUB_ENV
           echo REV=$((`git describe --tags  --match "v*" | sed 's/.*-\([0-9]*\)-.*/\1/' | sed s/^v.*//` + 1)) >> $GITHUB_ENV
-          echo ARCH=${{ matrix.config.arch }}-darwin >> $GITHUB_ENV
+          echo TARGET_ARCH=${{ matrix.config.arch }}-darwin >> $GITHUB_ENV
+          echo BIN_BASE=ppm.${{ matrix.config.arch }}-darwin >> $GITHUB_ENV
           echo BIN=ppm.${{ matrix.config.arch }}-darwin >> $GITHUB_ENV
-          echo CMAKE_DEFAULT_FLAGS=-DCMAKE_POLICY_VERSION_MINIMUM=3.5 >> $GITHUB_ENV
+
+      - name: Setup Meson
+        run: |
+          brew install meson ninja pkg-config
 
       - name: Build
         run: |
-          ./build.sh clean && ./build.sh -DPPM_STATIC -DPPM_VERSION='"'$FULL_VERSION-$ARCH'"' -O3
+          meson setup build-ci \
+            --buildtype=release \
+            --wrap-mode=forcefallback \
+            -Dstatic=true \
+            -Drelease_version="$VERSION" \
+            -Dfull_version="$FULL_VERSION" \
+            -Dtarget_arch="$TARGET_ARCH" \
+            -Dbinary_name="$BIN_BASE" \
+            -Dc_args="-ffunction-sections -fdata-sections"
+          meson compile -C build-ci
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          path: ${{ env.BIN }}
+          path: build-ci/${{ env.BIN }}
           name: ${{ env.BIN }}
