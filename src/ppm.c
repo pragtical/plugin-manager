@@ -38,16 +38,11 @@
 #endif
 
 #ifndef PPM_NO_NETWORK
+  #include <psa/crypto.h>
   #include <mbedtls/x509.h>
-  #include <mbedtls/entropy.h>
-  #include <mbedtls/ctr_drbg.h>
   #include <mbedtls/ssl.h>
   #include <mbedtls/error.h>
-  #if MBEDTLS_VERSION_MAJOR < 3
-    #include <mbedtls/net.h>
-  #else
-    #include <mbedtls/net_sockets.h>
-  #endif
+  #include <mbedtls/net_sockets.h>
   #ifdef MBEDTLS_DEBUG_C
     #include <mbedtls/debug.h>
   #endif
@@ -1282,8 +1277,6 @@ static int ppm_extract(lua_State* L) {
 #ifndef PPM_NO_NETWORK
   static int has_setup_ssl;
   static mbedtls_x509_crt x509_certificate;
-  static mbedtls_entropy_context entropy_context;
-  static mbedtls_ctr_drbg_context drbg_context;
   static mbedtls_ssl_config ssl_config;
   static mbedtls_ssl_context ssl_context;
 
@@ -1315,23 +1308,18 @@ static int ppm_extract(lua_State* L) {
     int status;
     if (has_setup_ssl) {
       mbedtls_ssl_config_free(&ssl_config);
-      mbedtls_ctr_drbg_free(&drbg_context);
-      mbedtls_entropy_free(&entropy_context);
       mbedtls_x509_crt_free(&x509_certificate);
     }
     mbedtls_x509_crt_init(&x509_certificate);
-    mbedtls_entropy_init(&entropy_context);
-    mbedtls_ctr_drbg_init(&drbg_context);
-    if ((status = mbedtls_ctr_drbg_seed(&drbg_context, mbedtls_entropy_func, &entropy_context, NULL, 0)) != 0)
-      return luaL_mbedtls_error(L, status, "failed to setup mbedtls_x509");
+    if ((status = psa_crypto_init()) != PSA_SUCCESS)
+      return luaL_error(L, "failed to initialize PSA crypto: %d", (int) status);
     mbedtls_ssl_config_init(&ssl_config);
     status = mbedtls_ssl_config_defaults(&ssl_config, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
     if (status)
       return luaL_mbedtls_error(L, status, "can't set ssl_config defaults");
-    mbedtls_ssl_conf_max_version(&ssl_config, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3);
-    mbedtls_ssl_conf_min_version(&ssl_config, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3);
+    mbedtls_ssl_conf_max_tls_version(&ssl_config, MBEDTLS_SSL_VERSION_TLS1_2);
+    mbedtls_ssl_conf_min_tls_version(&ssl_config, MBEDTLS_SSL_VERSION_TLS1_2);
     mbedtls_ssl_conf_authmode(&ssl_config, MBEDTLS_SSL_VERIFY_REQUIRED);
-    mbedtls_ssl_conf_rng(&ssl_config, mbedtls_ctr_drbg_random, &drbg_context);
     mbedtls_ssl_conf_read_timeout(&ssl_config, 5000);
     #if defined(MBEDTLS_DEBUG_C)
     if (print_trace) {
