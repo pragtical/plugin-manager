@@ -1,0 +1,7 @@
+[wrap-git]
+url = https://github.com/nih-at/libzip.git
+revision = v1.10.1
+depth = 1
+
+[provide]
+libzip = libzip_dep

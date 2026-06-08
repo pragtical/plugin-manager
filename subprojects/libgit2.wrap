@@ -1,0 +1,8 @@
+[wrap-git]
+url = https://github.com/libgit2/libgit2.git
+revision = v1.9.0
+depth = 1
+patch_directory = libgit2
+
+[provide]
+libgit2 = libgit2package_dep
