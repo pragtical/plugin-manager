@@ -159,12 +159,18 @@ static bool ssl_is_blocked(int error)
 		error == MBEDTLS_ERR_SSL_WANT_WRITE;
 }
 
+static bool ssl_is_transient(int error)
+{
+	return ssl_is_blocked(error) ||
+		error == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET;
+}
+
 static int ssl_set_error(mbedtls_ssl_context *ssl, int error)
 {
 	char errbuf[512];
 	int ret = -1;
 
-	if (ssl_is_blocked(error))
+	if (ssl_is_transient(error))
 		return GIT_RETRY;
 
 	if (error != 0)
@@ -192,7 +198,7 @@ static int ssl_teardown(mbedtls_ssl_context *ssl)
 	int ret = 0;
 
 	ret = mbedtls_ssl_close_notify(ssl);
-	if (ssl_is_blocked(ret))
+	if (ssl_is_transient(ret))
 		ret = 0;
 	if (ret < 0)
 		ret = ssl_set_error(ssl, ret);
@@ -243,7 +249,7 @@ static int mbedtls_connect(git_stream *stream)
 
 	do {
 		ret = mbedtls_ssl_handshake(st->ssl);
-	} while (ssl_is_blocked(ret));
+	} while (ssl_is_transient(ret));
 
 	if (ret != 0)
 		return ssl_set_error(st->ssl, ret);
@@ -304,7 +310,7 @@ static ssize_t mbedtls_stream_write(git_stream *stream, const char *data, size_t
 
 	do {
 		written = mbedtls_ssl_write(st->ssl, (const unsigned char *)data, len);
-	} while (ssl_is_blocked(written));
+	} while (ssl_is_transient(written));
 
 	if (written <= 0)
 		return ssl_set_error(st->ssl, written);
@@ -319,7 +325,7 @@ static ssize_t mbedtls_stream_read(git_stream *stream, void *data, size_t len)
 
 	do {
 		ret = mbedtls_ssl_read(st->ssl, (unsigned char *)data, len);
-	} while (ssl_is_blocked(ret));
+	} while (ssl_is_transient(ret));
 
 	if (ret <= 0)
 		ssl_set_error(st->ssl, ret);
