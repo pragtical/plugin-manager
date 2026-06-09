@@ -55,6 +55,12 @@ endif
 
 cflags += '-DPPM_VERSION="@0@"'.format(ppm_version)
 
+pragtical_datadir = get_option('pragtical_datadir')
+if pragtical_datadir == ''
+    # No path given, assume a default
+    pragtical_datadir = get_option('datadir') / 'pragtical'
+endif
+
 if get_option('static')
     python = import('python').find_installation()
 
@@ -85,14 +91,10 @@ ppm_exe = executable(ppm_binary_name,
     ],
     c_args: cflags,
     install: true,
+    install_dir: get_option('install_plugin') ? pragtical_datadir / 'plugins/plugin_manager' : get_option('bindir'),
 )
 
 if (get_option('install_plugin'))
-    pragtical_datadir = get_option('pragtical_datadir')
-    if pragtical_datadir == ''
-        # No path given, assume a default
-        pragtical_datadir = get_option('datadir') + '/pragtical'
-    endif
-
-    install_subdir('plugins', install_dir : pragtical_datadir)
+    install_subdir('plugins/plugin_manager', install_dir : pragtical_datadir / 'plugins')
+    install_data('libraries/json.lua', install_dir : pragtical_datadir / 'libraries')
 endif
