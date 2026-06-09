@@ -75,13 +75,19 @@ jobs:
         run: |
           MESON_CROSS_ARGS=()
           MESON_C_ARGS="-ffunction-sections -fdata-sections"
+          MESON_ARGS=()
 
           case "$TARGET_ARCH" in
+            x86_64-linux)
+              MESON_ARGS+=(-Dfully_static=true)
+              ;;
             aarch64-linux)
               MESON_CROSS_ARGS=(--cross-file=cross/aarch64-linux-musl.ini)
+              MESON_ARGS+=(-Dfully_static=true)
               ;;
             riscv64-linux)
               MESON_CROSS_ARGS=(--cross-file=cross/riscv64-linux-musl.ini)
+              MESON_ARGS+=(-Dfully_static=true)
               ;;
             x86_64-windows)
               MESON_CROSS_ARGS=(--cross-file=cross/x86_64-w64-mingw32.ini)
@@ -114,8 +120,18 @@ jobs:
             -Dbinary_name="$BIN_BASE" \
             -Dc_args="$MESON_C_ARGS" \
             -Dc_link_args="-Wl,--gc-sections" \
+            "${MESON_ARGS[@]}" \
             "${MESON_CROSS_ARGS[@]}"
           meson compile -C build-ci
+
+      - name: Verify Linux Static Artifact
+        if: ${{ matrix.config.platform == 'linux' }}
+        run: |
+          file build-ci/$BIN
+          if readelf -l build-ci/$BIN | grep -q 'Requesting program interpreter'; then
+            echo "::error::$BIN is dynamically linked"
+            exit 1
+          fi
 
       # - name: Run Tests
       #   if: ${{ matrix.config.native }}

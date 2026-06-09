@@ -31,6 +31,7 @@ microtar_dep = declare_dependency(
 
 ppm_source = files('src/ppm.c')
 cflags = []
+link_args = []
 ppm_release_version = get_option('release_version')
 ppm_full_version = get_option('full_version')
 ppm_target_arch = get_option('target_arch')
@@ -78,6 +79,10 @@ if get_option('static')
     cflags += '-DPPM_STATIC'
 endif
 
+if get_option('fully_static')
+    link_args += '-static'
+endif
+
 ppm_exe = executable(ppm_binary_name,
     ppm_source,
     dependencies: [
@@ -90,6 +95,7 @@ ppm_exe = executable(ppm_binary_name,
         microtar_dep
     ],
     c_args: cflags,
+    link_args: link_args,
     install: true,
     install_dir: get_option('install_plugin') ? pragtical_datadir / 'plugins/plugin_manager' : get_option('bindir'),
 )
