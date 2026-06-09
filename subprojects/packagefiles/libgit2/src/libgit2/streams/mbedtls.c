@@ -153,13 +153,19 @@ static int bio_write(void *b, const unsigned char *buf, size_t len)
 	return (int) git_stream_write(io, (const char *)buf, min(len, INT_MAX), 0);
 }
 
+static bool ssl_is_blocked(int error)
+{
+	return error == MBEDTLS_ERR_SSL_WANT_READ ||
+		error == MBEDTLS_ERR_SSL_WANT_WRITE;
+}
+
 static int ssl_set_error(mbedtls_ssl_context *ssl, int error)
 {
 	char errbuf[512];
 	int ret = -1;
 
-	GIT_ASSERT(error != MBEDTLS_ERR_SSL_WANT_READ);
-	GIT_ASSERT(error != MBEDTLS_ERR_SSL_WANT_WRITE);
+	if (ssl_is_blocked(error))
+		return GIT_RETRY;
 
 	if (error != 0)
 		mbedtls_strerror( error, errbuf, 512 );
@@ -186,6 +192,8 @@ static int ssl_teardown(mbedtls_ssl_context *ssl)
 	int ret = 0;
 
 	ret = mbedtls_ssl_close_notify(ssl);
+	if (ssl_is_blocked(ret))
+		ret = 0;
 	if (ret < 0)
 		ret = ssl_set_error(ssl, ret);
 
@@ -233,7 +241,11 @@ static int mbedtls_connect(git_stream *stream)
 
 	mbedtls_ssl_set_bio(st->ssl, st->io, bio_write, bio_read, NULL);
 
-	if ((ret = mbedtls_ssl_handshake(st->ssl)) != 0)
+	do {
+		ret = mbedtls_ssl_handshake(st->ssl);
+	} while (ssl_is_blocked(ret));
+
+	if (ret != 0)
 		return ssl_set_error(st->ssl, ret);
 
 	return verify_server_cert(st->ssl);
@@ -290,7 +302,11 @@ static ssize_t mbedtls_stream_write(git_stream *stream, const char *data, size_t
 	 */
 	len = min(len, INT_MAX);
 
-	if ((written = mbedtls_ssl_write(st->ssl, (const unsigned char *)data, len)) <= 0)
+	do {
+		written = mbedtls_ssl_write(st->ssl, (const unsigned char *)data, len);
+	} while (ssl_is_blocked(written));
+
+	if (written <= 0)
 		return ssl_set_error(st->ssl, written);
 
 	return written;
@@ -301,7 +317,11 @@ static ssize_t mbedtls_stream_read(git_stream *stream, void *data, size_t len)
 	mbedtls_stream *st = (mbedtls_stream *) stream;
 	int ret;
 
-	if ((ret = mbedtls_ssl_read(st->ssl, (unsigned char *)data, len)) <= 0)
+	do {
+		ret = mbedtls_ssl_read(st->ssl, (unsigned char *)data, len);
+	} while (ssl_is_blocked(ret));
+
+	if (ret <= 0)
 		ssl_set_error(st->ssl, ret);
 
 	return ret;
