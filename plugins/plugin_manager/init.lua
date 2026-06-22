@@ -232,6 +232,28 @@ function PluginManager:purge(options)
 end
 
 
+function PluginManager:add(url, options)
+  options = options or {}
+  local promise = Promise.new()
+  if options.progress then options.progress({ label = "Adding repository...", percent = 0 }) end
+  run({ "repo", "add", url }, options):done(function()
+    self:refresh(options):forward(promise)
+  end):fail(function(arg) promise:reject(arg) end)
+  return promise
+end
+
+
+function PluginManager:remove(url, options)
+  options = options or {}
+  local promise = Promise.new()
+  if options.progress then options.progress({ label = "Removing repository...", percent = 0 }) end
+  run({ "repo", "rm", url }, options):done(function()
+    self:refresh(options):forward(promise)
+  end):fail(function(arg) promise:reject(arg) end)
+  return promise
+end
+
+
 function PluginManager:get_addons(options)
   local prom = Promise.new()
   if self.addons then
@@ -528,8 +550,8 @@ end
 command.add(nil, {
   ["plugin-manager:install"] = function()
     PluginManager:get_addons({ progress = PluginManager.view.progress_callback })
-    core.command_view:enter("Enter plugin name",
-      function(name)
+    core.command_view:enter("Enter plugin name", {
+      submit = function(name)
         PluginManager:get_addon(name, { progress = PluginManager.view.progress_callback }):done(function(addon)
           core.log("Attempting to install plugin " .. name .. "...")
           PluginManager:install(addon, { progress = PluginManager.view.progress_callback }):done(function()
@@ -539,7 +561,7 @@ command.add(nil, {
           core.error("Unknown plugin " .. name .. ".")
         end)
       end,
-      function(text)
+      suggest = function(text)
         local items = {}
         if not PluginManager.addons then return end
         for i, addon in ipairs(PluginManager.addons) do
@@ -549,12 +571,12 @@ command.add(nil, {
         end
         return common.fuzzy_match(items, text)
       end
-    )
+    })
   end,
   ["plugin-manager:uninstall"] = function()
     PluginManager:get_addons({ progress = PluginManager.view.progress_callback })
-    core.command_view:enter("Enter plugin name",
-      function(name)
+    core.command_view:enter("Enter plugin name", {
+      submit = function(name)
         PluginManager:get_addon(name, { progress = PluginManager.view.progress_callback }):done(function(addon)
           core.log("Attempting to uninstall plugin " .. addon.id .. "...")
           PluginManager:uninstall(addon, { progress = PluginManager.view.progress_callback }):done(function()
@@ -564,7 +586,7 @@ command.add(nil, {
           core.error("Unknown plugin " .. name .. ".")
         end)
       end,
-      function(text)
+      suggest = function(text)
         local items = {}
         if not PluginManager.addons then return end
         for i, addon in ipairs(PluginManager.addons) do
@@ -574,26 +596,26 @@ command.add(nil, {
         end
         return common.fuzzy_match(items, text)
       end
-    )
+    })
   end,
   ["plugin-manager:add-repository"] = function()
-    core.command_view:enter("Enter repository url",
-      function(url)
+    core.command_view:enter("Enter repository url", {
+      submit = function(url)
         PluginManager:add(url):done(function()
           core.log("Successfully added repository " .. url .. ".")
         end)
       end
-    )
+    })
   end,
   ["plugin-manager:remove-repository"] = function()
     PluginManager:get_addons({ progress = PluginManager.view.progress_callback })
-    core.command_view:enter("Enter repository url",
-      function(url)
+    core.command_view:enter("Enter repository url", {
+      submit = function(url)
         PluginManager:remove(url):done(function()
           core.log("Successfully removed repository " .. url .. ".")
         end)
       end,
-      function(text)
+      suggest = function(text)
         local items = {}
         if PluginManager.repositories then
           for i,v in ipairs(PluginManager.repositories) do
@@ -602,7 +624,7 @@ command.add(nil, {
         end
         return common.fuzzy_match(items, text)
       end
-    )
+    })
   end,
   ["plugin-manager:refresh"] = function() PluginManager:refresh({ progress = PluginManager.view.progress_callback }):done(function() core.log("Successfully refreshed plugin listing.") end) end,
   ["plugin-manager:check-for-updates"] = function()
