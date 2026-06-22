@@ -295,7 +295,7 @@ function PluginManager:upgrade_addon(addon, options)
   local promise = Promise.new()
   if options.progress then options.progress({ label = "Checking for plugin updates...", percent = 0 }) end
   run({ "update" }, options):done(function()
-    local version = addon.available_version or addon.version
+    local version = addon.available_version
     run_stateful_plugin_command(self, "install", { addon.id .. (version and (":" .. version) or "") }, options):forward(promise)
   end):fail(function(arg) promise:reject(arg) end)
   return promise

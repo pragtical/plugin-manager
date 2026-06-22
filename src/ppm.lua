@@ -826,6 +826,58 @@ function Addon.is_addon_different(downloaded_path, installed_path)
   return common.is_path_different(downloaded_path, target)
 end
 
+function Addon:file_applies_to_arch(file)
+  if not file.arch then return true end
+  local file_arch = type(file.arch) == "string" and { file.arch } or file.arch
+  return #common.grep(file_arch, function(e) return e == "*" or #common.grep(ARCH, function(arch) return e == arch end) > 0 end) > 0
+end
+
+function Addon:get_cached_file_path(file)
+  if not file.url or not file.checksum then return end
+  local path = CACHEDIR .. PATHSEP .. "files" .. PATHSEP .. system.hash(file.checksum .. file.url)
+  return system.stat(path) and path or nil
+end
+
+function Addon:files_match_install_path(install_path)
+  if not self.files or #self.files == 0 then return nil end
+
+  local matched = false
+  for _, file in ipairs(self.files) do
+    if self:file_applies_to_arch(file) and not file.optional then
+      matched = true
+      local cache_path = self:get_cached_file_path(file)
+      if not cache_path then return nil end
+
+      local name = file.path or common.basename(file.url)
+      local basename = common.basename(name)
+      local is_archive = basename:find("%.zip$") or basename:find("%.tar%.gz$") or basename:find("%.tgz$")
+      if is_archive then
+        local extracted_path = TMPDIR .. PATHSEP .. "compare" .. PATHSEP .. system.hash(cache_path .. install_path)
+        common.rmrf(extracted_path)
+        common.mkdirp(extracted_path)
+        system.extract(cache_path, extracted_path)
+        local is_different = common.is_path_different(extracted_path, install_path)
+        common.rmrf(extracted_path)
+        if is_different then return false end
+      else
+        local target = install_path .. PATHSEP .. name
+        if basename:find("%.gz$") then
+          target = install_path .. PATHSEP .. name:gsub("%.gz$", "")
+        end
+        if common.is_path_different(cache_path, target) then return false end
+      end
+    end
+  end
+
+  return matched and true or nil
+end
+
+function Addon:matches_install_path(install_path)
+  local files_match = self:files_match_install_path(install_path)
+  if files_match ~= nil then return files_match end
+  return self.local_path and not Addon.is_addon_different(self.local_path, install_path)
+end
+
 function Addon:get_install_path_at(root)
   local folder = self.type == "library" and "libraries" or (self.type .. "s")
   local path = root .. PATHSEP .. folder
@@ -876,7 +928,7 @@ function Addon:is_installed(bottle)
   if self:is_asset() then return true end
   local installed_addons = common.grep({ bottle:get_addon(self.id, nil, {  }) }, function(addon) return not addon.repository end)
   if #common.grep(installed_addons, function(addon) return not addon:is_core(bottle) and not addon:is_bundled(bottle) end) > 0 then return false end
-  return self.local_path and not Addon.is_addon_different(self.local_path, install_path)
+  return self:matches_install_path(install_path)
 end
 function Addon:is_upgradable(bottle)
   if self:is_installed(bottle) then
@@ -959,10 +1011,7 @@ function Addon:install(bottle, installing)
     for _, addon in ipairs(dependency_list) do
       local v = self.dependencies[addon]
       if compatible[addon] and not compatible[addon]:is_core(bottle) and not compatible[addon]:is_installed(bottle) then
-        if installing[addon] then
-          error("circular dependency detected in " .. self.id .. ": requires " .. addon .. " but, " .. addon .. " requires " .. self.id)
-        end
-        if not v.optional or (not NO_INSTALL_OPTIONAL and prompt(addon .. " is an optional dependency of " .. self.id .. ". Should we install it?")) then
+        if not installing[addon] and (not v.optional or (not NO_INSTALL_OPTIONAL and prompt(addon .. " is an optional dependency of " .. self.id .. ". Should we install it?"))) then
           compatible[addon]:install(bottle, installing)
         end
       end
@@ -1766,7 +1815,7 @@ function Bottle:all_addons()
           local fetchable = hash[id] and common.grep(hash[id], function(e) return e:is_stub() end)[1]
           if fetchable then fetchable:unstub() end
           local matching = hash[id] and common.grep(hash[id], function(e)
-            return e.local_path and not Addon.is_addon_different(e.local_path, path)
+            return e:matches_install_path(path)
           end)[1]
           if (i ~= 2 or not user_addons[id]) and (not hash[id] or not matching) then
             local translations = {
@@ -2590,9 +2639,22 @@ function ppm.describe()
 end
 
 function ppm.addon_upgrade()
+  local installing = {}
+  local upgraded = {}
   for _,addon in ipairs(system_bottle:installed_addons()) do
-    local upgrade = common.sort({ system_bottle:get_addon(addon.id, ">" .. addon.version) }, function(a, b) return compare_version(b.version, a.version) end)[1]
-    if upgrade then upgrade:install(system_bottle) end
+    if not upgraded[addon.id] and not addon:is_core(system_bottle) and not addon:is_bundled(system_bottle) then
+      local candidates = common.grep({ system_bottle:get_addon(addon.id) }, function(candidate)
+        return candidate.repository and
+          candidate:is_installable(system_bottle) and
+          not candidate:is_installed(system_bottle) and
+          (not addon.repository or compare_version(addon.version, candidate.version) < 0)
+      end)
+      local upgrade = common.sort(candidates, function(a, b) return compare_version(b.version, a.version) end)[1]
+      if upgrade then
+        upgrade:install(system_bottle, installing)
+        upgraded[upgrade.id] = true
+      end
+    end
   end
 end
 
