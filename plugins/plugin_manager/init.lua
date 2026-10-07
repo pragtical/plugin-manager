@@ -1,10 +1,10 @@
--- mod-version:3 --priority:5
+-- mod-version:3.10.0 --priority:5
 
 local core = require "core"
 local common = require "core.common"
 local config = require "core.config"
 local command = require "core.command"
-local json = require "libraries.json"
+local json = require "core.json"
 local keymap = require "core.keymap"
 
 
@@ -68,6 +68,13 @@ function Promise:forward(promise) self:done(function(data) promise:resolve(data)
 
 local function join(joiner, t) local s = "" for i,v in ipairs(t) do if i > 1 then s = s .. joiner end s = s .. v end return s end
 
+local function decode_response(data)
+  local ok, result, err = pcall(json.decode, data)
+  if not ok then return nil, result end
+  if type(result) ~= "table" then return nil, err or "invalid ppm JSON response" end
+  return result
+end
+
 local running_processes = {}
 local default_arguments = {
   "--mod-version=" .. (rawget(_G, "MOD_VERSION_STRING") or MOD_VERSION),
@@ -94,8 +101,19 @@ local function drain_progress(chunk, options)
     progress_line, chunk = extract_progress(chunk)
     if not progress_line then break end
     if options.progress then
-      progress_line = json.decode(progress_line)
-      options.progress(progress_line.progress)
+      local decoded, err = decode_response(progress_line)
+      local progress = decoded and decoded.progress
+      if type(progress) == "table" then
+        -- core.json preserves long numeric tokens as marked strings.
+        local percent = progress.percent
+        if type(percent) == "string" and json.number_flag
+          and percent:sub(1, #json.number_flag) == json.number_flag then
+          progress.percent = tonumber(percent:sub(#json.number_flag + 1))
+        end
+        options.progress(progress)
+      else
+        core.error("invalid ppm progress response: %s", err or "missing progress object")
+      end
     end
   end
   return chunk
@@ -153,8 +171,8 @@ local function run(cmd, options)
                 local err = v[6] .. read_stderr(v[1])
                 if #err == 0 then err = "ppm exited with code " .. tostring(v[1]:returncode()) end
                 core.error("error running %s: %s", join(" ", v[4]), err)
-                local ok, result = pcall(json.decode, err)
-                v[2]:reject(ok and type(result) == "table" and result.error or err)
+                local result = decode_response(err)
+                v[2]:reject(result and result.error or err)
               end
               break
             end
@@ -181,12 +199,17 @@ function PluginManager:refresh(options)
     table.insert(cmd, "!library")
   end
   run(cmd, options):done(function(addons)
-    self.addons = json.decode(addons)["addons"]
+    local decoded, err = decode_response(addons)
+    if not decoded or type(decoded.addons) ~= "table" then
+      prom:reject(err or "invalid ppm addon listing")
+      return
+    end
+    self.addons = decoded.addons
     table.sort(self.addons, function(a,b) return a.id < b.id end)
     self.valid_addons = {}
     local special_addons = {}
     for i, addon in ipairs(self.addons) do
-      if (addon.id == "plugin_manager" or addon.id == "json") and (addon.status == "installed" or addon.status == "orphan" or addon.status == "upgradable") then
+      if addon.id == "plugin_manager" and (addon.status == "installed" or addon.status == "orphan" or addon.status == "upgradable") then
         addon.status = "special"
         special_addons[addon.id] = true
       end
@@ -202,12 +225,27 @@ function PluginManager:refresh(options)
     core.redraw = true
     prom:resolve(addons)
     run({ "repo", "list" }, options):done(function(repositories)
-      self.repositories = json.decode(repositories)["repositories"]
+      local decoded, err = decode_response(repositories)
+      if decoded and type(decoded.repositories) == "table" then
+        self.repositories = decoded.repositories
+      else
+        core.error("invalid ppm repository listing: %s", err or "missing repositories object")
+      end
     end)
   end):fail(function(err) prom:reject(err) end)
   return prom
 end
 
+
+local function finish_plugin_changes(plugin_manager, options, promise, result)
+  if (options.restart == nil and config.plugins.plugin_manager.restart_on_change) or options.restart then
+    -- Resolve first so views can save completed selections before the Lua state is replaced.
+    promise:resolve(result)
+    command.perform("core:restart")
+  else
+    plugin_manager:refresh(options):forward(promise)
+  end
+end
 
 function PluginManager:upgrade(options)
   options = options or {}
@@ -216,11 +254,7 @@ function PluginManager:upgrade(options)
   run({ "update" }, options):done(function()
     if options.progress then options.progress({ label = "Upgrading installed plugins...", percent = 0 }) end
     run({ "upgrade" }, options):done(function()
-      if (options.restart == nil and config.plugins.plugin_manager.restart_on_change) or options.restart then
-        command.perform("core:restart")
-      else
-        self:refresh(options):forward(prom)
-      end
+      finish_plugin_changes(self, options, prom)
     end):fail(function(arg) prom:reject(arg) end)
   end):fail(function(arg) prom:reject(arg) end)
   return prom
@@ -282,17 +316,13 @@ local function run_stateful_plugin_command(plugin_manager, cmd, args, options)
   local promise = Promise.new()
   if options.progress then
     local labels = {
-      install = args[#args] == "--reinstall" and "Reinstalling plugin..." or "Installing plugin...",
-      uninstall = "Uninstalling plugin..."
+      install = args[#args] == "--reinstall" and "Reinstalling plugins..." or "Installing plugins...",
+      uninstall = "Uninstalling plugins..."
     }
     options.progress({ label = labels[cmd] or "Applying plugin changes...", percent = 0 })
   end
   run({ cmd, table.unpack(args) }, options):done(function(result)
-    if (options.restart == nil and config.plugins.plugin_manager.restart_on_change) or options.restart then
-      command.perform("core:restart")
-    else
-      plugin_manager:refresh(options):forward(promise)
-    end
+    finish_plugin_changes(plugin_manager, options, promise, result)
   end):fail(function(arg)
     promise:reject(arg)
   end)
@@ -300,19 +330,45 @@ local function run_stateful_plugin_command(plugin_manager, cmd, args, options)
 end
 
 
-function PluginManager:install(addon, options) return run_stateful_plugin_command(self, "install", { addon.id .. (addon.version and (":" .. addon.version) or "") }, options) end
-function PluginManager:upgrade_addon(addon, options)
+local function addon_arguments(addons, include_version)
+  local args, indices = {}, {}
+  for _, addon in ipairs(addons) do
+    local arg = addon.id .. (include_version and addon.version and (":" .. addon.version) or "")
+    if indices[addon.id] then
+      args[indices[addon.id]] = arg
+    else
+      args[#args + 1] = arg
+      indices[addon.id] = #args
+    end
+  end
+  assert(#args > 0, "no addons selected")
+  return args
+end
+
+function PluginManager:install_many(addons, options)
+  return run_stateful_plugin_command(self, "install", addon_arguments(addons, true), options)
+end
+
+function PluginManager:upgrade_many(addons, options)
   options = options or {}
   local promise = Promise.new()
+  local args = addon_arguments(addons, false)
   if options.progress then options.progress({ label = "Checking for plugin updates...", percent = 0 }) end
   run({ "update" }, options):done(function()
-    local version = addon.available_version
-    run_stateful_plugin_command(self, "install", { addon.id .. (version and (":" .. version) or "") }, options):forward(promise)
+    -- Let ppm resolve the latest compatible candidates after updating metadata.
+    run_stateful_plugin_command(self, "install", args, options):forward(promise)
   end):fail(function(arg) promise:reject(arg) end)
   return promise
 end
+
+function PluginManager:uninstall_many(addons, options)
+  return run_stateful_plugin_command(self, "uninstall", addon_arguments(addons, false), options)
+end
+
+function PluginManager:install(addon, options) return self:install_many({ addon }, options) end
+function PluginManager:upgrade_addon(addon, options) return self:upgrade_many({ addon }, options) end
 function PluginManager:reinstall(addon, options) return run_stateful_plugin_command(self, "install", { addon.id .. (addon.version and (":" .. addon.version) or ""), "--reinstall" }, options) end
-function PluginManager:uninstall(addon, options) return run_stateful_plugin_command(self, "uninstall", { addon.id }, options) end
+function PluginManager:uninstall(addon, options) return self:uninstall_many({ addon }, options) end
 function PluginManager:unstub(addon, options)
   options = options or {}
   local promise = Promise.new()
@@ -321,10 +377,10 @@ function PluginManager:unstub(addon, options)
   else
     if options.progress then options.progress({ label = "Fetching plugin source...", percent = 0 }) end
     run({ "unstub", addon.id }, options):done(function(result)
-      local decoded = json.decode(result)
+      local decoded, err = decode_response(result)
       local unstubbed_addon = decoded and decoded.addons and decoded.addons[1]
       if type(unstubbed_addon) ~= "table" then
-        promise:reject("can't find source for " .. addon.id)
+        promise:reject(err or "can't find source for " .. addon.id)
         return
       end
       for k,v in pairs(unstubbed_addon) do addon[k] = v end
@@ -505,7 +561,9 @@ if config.plugins.plugin_manager.addons then
   end
   local plugins = system.list_dir(USERDIR .. PATHSEP .. "plugins")
   run({ "apply", table.unpack(addons), }, { userdir = target_plugin_directory }):done(function(status)
-    if json.decode(status)["changed"] then command.perform("core:restart") end
+    local decoded, err = decode_response(status)
+    if not decoded then core.error("invalid ppm apply response: %s", err)
+    elseif decoded.changed then command.perform("core:restart") end
   end)
   ppm_load_plugins()
   local old_configs = {}
@@ -600,7 +658,7 @@ command.add(nil, {
   end,
   ["plugin-manager:refresh"] = function() PluginManager:refresh({ progress = PluginManager.view.progress_callback }):done(function() core.log("Successfully refreshed plugin listing.") end) end,
   ["plugin-manager:check-for-updates"] = function()
-    local view = core.active_view and core.active_view:is(PluginManager.view) and core.active_view
+    local view = PluginManager.view.active()
     local action = view and view:check_for_updates() or PluginManager:check_for_updates({})
     action:done(function() core.log("Successfully checked for plugin updates.") end)
   end,

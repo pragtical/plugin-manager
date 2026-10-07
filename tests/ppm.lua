@@ -1,7 +1,7 @@
 local core = require "core"
 local common = require "core.common"
 local config = require "core.config"
-local json = require "libraries.json"
+local json = require "core.json"
 local test = require "core.test"
 
 local function write(path, contents)
@@ -106,9 +106,8 @@ local function create_repository(context)
     return entry
   end
   add("bracketmatch", "plugins/bracketmatch.lua")
-  add("json", "libraries/json.lua", { type = "library" })
   add("plugin_manager", "plugins/plugin_manager/init.lua", {
-    organization = "complex", dependencies = { json = {} }, files = {
+    organization = "complex", dependencies = { encoding = {} }, files = {
       { arch = "x86_64-linux", url = "https://example.invalid/ppm.x86_64-linux",
         checksum = "SKIP", optional = true },
       { arch = "x86_64-windows", url = "https://example.invalid/ppm.x86_64-windows.exe",
@@ -172,6 +171,44 @@ test.describe("ppm integration", function()
     test.is_nil(system.get_file_info(context.userdir .. PATHSEP .. "plugins/bracketmatch.lua"))
   end)
 
+  test.test("batch uninstall skips targets already removed by dependency cleanup", function(context)
+    ppm(context, { "install", "lsp" })
+    local result = ppm(context, { "uninstall", "lsp", "lintplus", "widget", "lsp" })
+    test.ok(#result.actions >= 3)
+    for _, path in ipairs({ "plugins/lsp", "plugins/lintplus", "libraries/widget" }) do
+      test.is_nil(system.get_file_info(context.userdir .. PATHSEP .. path))
+    end
+    test.equal(addon(context, "lsp").status, "available")
+  end)
+
+  test.test("batch uninstall handles dependency targets before their dependents", function(context)
+    ppm(context, { "install", "lsp" })
+    ppm(context, { "uninstall", "widget", "lsp", "lintplus" })
+    for _, path in ipairs({ "plugins/lsp", "plugins/lintplus", "libraries/widget" }) do
+      test.is_nil(system.get_file_info(context.userdir .. PATHSEP .. path))
+    end
+  end)
+
+  test.test("batch uninstall validates missing targets before removing files", function(context)
+    ppm(context, { "install", "bracketmatch" })
+    local result = ppm(context, { "uninstall", "bracketmatch", "missing_fixture" }, { failure = true })
+    test.contains(result.error, "missing_fixture")
+    exists(context.userdir .. PATHSEP .. "plugins/bracketmatch.lua", "file")
+  end)
+
+  test.test("batch uninstall preserves bundled dependencies and bundled targets", function(context)
+    local bundled = context.datadir .. PATHSEP .. "libraries/widget/init.lua"
+    local contents = read(context.repo .. PATHSEP .. "libraries/widget/init.lua")
+    write(bundled, contents)
+    ppm(context, { "install", "lsp" })
+    test.is_nil(system.get_file_info(context.userdir .. PATHSEP .. "libraries/widget"))
+    ppm(context, { "uninstall", "lsp", "widget" })
+    test.is_nil(system.get_file_info(context.userdir .. PATHSEP .. "plugins/lsp"))
+    test.is_nil(system.get_file_info(context.userdir .. PATHSEP .. "plugins/lintplus"))
+    test.equal(read(bundled), contents)
+    addon(context, "widget", "bundled")
+  end)
+
   test.test("reinstalls a modified singleton", function(context)
     ppm(context, { "install", "bracketmatch" })
     local installed = addon(context, "bracketmatch", "installed")
@@ -186,9 +223,9 @@ test.describe("ppm integration", function()
   test.test("installs and uninstalls a complex addon with a library", function(context)
     local entry = addon(context, "plugin_manager", "available")
     test.equal(entry.organization, "complex")
-    test.not_nil(entry.dependencies.json)
+    test.not_nil(entry.dependencies.encoding)
     ppm(context, { "install", "plugin_manager" })
-    exists(context.userdir .. PATHSEP .. "libraries/json.lua", "file")
+    exists(context.userdir .. PATHSEP .. "libraries/encoding/init.lua", "file")
     exists(context.userdir .. PATHSEP .. "plugins/plugin_manager/init.lua", "file")
     ppm(context, { "uninstall", "plugin_manager" })
     test.is_nil(system.get_file_info(context.userdir .. PATHSEP .. "plugins/plugin_manager"))
@@ -260,11 +297,15 @@ test.describe("ppm integration", function()
     local root = common.dirname(common.dirname(context.file))
     local manifest = json.decode(read(root .. PATHSEP .. "manifest.json"))
     test.equal(#manifest.remotes, 2)
-    test.equal(#manifest.addons, 3)
+    test.equal(#manifest.addons, 1)
     for _, entry in ipairs(manifest.addons) do
       test.type(entry.id, "string")
       test.type(entry.version, "string")
       exists(root .. PATHSEP .. entry.path)
+      if entry.id == "plugin_manager" then
+        test.equal(entry.mod_version, "3.10.0")
+        test.is_nil(entry.dependencies and entry.dependencies.json)
+      end
     end
   end)
 
@@ -328,6 +369,57 @@ test.describe("ppm integration", function()
     test.equal(#ppm(context, { "repo", "list" }).repositories, 1)
   end)
 
+  local archive_fixtures = {
+    { extension = "zip", hex =
+      "504b03041400000008002d74475dfa99493131000000500100000b000000" ..
+      "7061796c6f61642e7478742b28c85548492d48cd4b49cd4bae54282d482f" ..
+      "4a4c4955482c4acec82c4b5528cecdcf4e5528492d2ee12a185549844a00" ..
+      "504b01021e031400000008002d74475dfa99493131000000500100000b00" ..
+      "00000000000001000000a481000000007061796c6f61642e747874504b05" ..
+      "060000000001000100390000005a0000000000"
+    },
+    { extension = "tar.gz", hex =
+      "1f8b0800000000000003edd1c10ac2300cc6f19d7d8a3c8174aefa3e650d" ..
+      "2abaadb49db8b7b7ece2f0e4652af8ff5d12c2070924b8e93a38bfcdf75c" ..
+      "adc514076be75abc56b3df3dfb795e9bbab19598d52e5a185376b1acffc4" ..
+      "ae1f1442275e83f65efb7692311ca3f32a2eb6a7f34d2575c345256bca1b" ..
+      "92ef24bffd4f00000000000000000000000000ffe3017adab04100280000"
+    },
+    { extension = "tar.xz", hex =
+      "fd377a585a00000ae1fb0ca104c1930180500b002101160000000000e5b9" ..
+      "86e7e027ff008b5d0038184b99750f46086fd33a2097f4d96286eccbb0d4" ..
+      "75d1a37515586bee0abe4064f17f24c5736da63b8a3c0377a13770f849bd" ..
+      "31ac99921dc60f94e17dbfc882a718160d3e411a597a1a4bbbd0bd2a1070" ..
+      "5189f25df55df60681df47d21038fcaaf90a44cf70f141d5ccae4a1b34af" ..
+      "fc3147943896d3282204cf68952627f86098e75c075f03db741ef4690000" ..
+      "805ea997865e6b343a521ec10726ace3613ad1b251c66fccfd9563ba630a" ..
+      "04e00001c70180500000ea4b3d73b6e9df1c02000000000a595a"
+    },
+  }
+
+  for _, fixture in ipairs(archive_fixtures) do
+    test.test("extracts a " .. fixture.extension .. " archive", function(context)
+      local path = context.root .. PATHSEP .. "fixture." .. fixture.extension
+      local contents = fixture.hex:gsub("..", function(byte)
+        return string.char(tonumber(byte, 16))
+      end)
+      write(path, contents)
+      local destination = context.root .. PATHSEP .. "extracted"
+      ppm(context, { "extract", path, destination })
+      test.equal(read(destination .. PATHSEP .. "payload.txt"),
+        string.rep("ppm dependency upgrade archive smoke test\n", 8))
+    end)
+  end
+
+  test.test("reports an invalid ZIP archive without crashing", function(context)
+    local path = context.root .. PATHSEP .. "invalid.zip"
+    write(path, "not a zip archive")
+    local result = ppm(context, { "extract", path, context.root .. PATHSEP .. "extracted" },
+      { failure = true })
+    test.contains(result.error, "can't open zip archive")
+    test.contains(result.error, "Not a zip archive")
+  end)
+
   test.test("matches Pragtical's semantic plugin compatibility rules", function(context)
     local versions = {
       tostring(MOD_VERSION_MAJOR), MOD_VERSION_STRING,
@@ -363,7 +455,7 @@ test.describe("ppm integration", function()
     end
   end)
 
-  local function check_install_restart(context, mouse_install)
+  local function check_install_restart(context, batch_install)
     for _, filename in ipairs({ "init.lua", "plugin_view.lua" }) do
       write(context.userdir .. PATHSEP .. "plugins/plugin_manager/" .. filename,
         read(context.cwd .. PATHSEP .. "plugins/plugin_manager/" .. filename))
@@ -372,13 +464,14 @@ test.describe("ppm integration", function()
 local config = require "core.config"
 config.plugins.ipc = false
 config.plugins.plugin_manager = { ppm_binary_path = %q, restart_on_change = true }
+package.preload["libraries.json"] = function() error("legacy JSON module is unavailable") end
 ]], context.binary))
     write(context.userdir .. PATHSEP .. "session.lua",
       "return " .. common.serialize({ recents = { context.root } }))
     -- A non-embedded developer binary reads its source from the current directory.
     write(context.root .. PATHSEP .. "src/ppm.lua", read(context.cwd .. PATHSEP .. "src/ppm.lua"))
     local script = context.root .. PATHSEP .. "restart.lua"
-    write(script, "local mouse_install = " .. tostring(mouse_install) .. "\n" .. [=[
+    write(script, "local batch_install = " .. tostring(batch_install) .. "\n" .. [=[
 local core = require "core"
 local command = require "core.command"
 local common = require "core.common"
@@ -404,30 +497,41 @@ core.add_thread(function()
       assert(command.perform("plugin-manager:show"))
       local view = assert(find_view(), "Plugin Manager did not open")
       wait_for(function() return view.initialized and not view.loading end, "initial listing stalled")
+      if batch_install then
+        for _, addon in ipairs(view:get_plugins()) do
+          if addon.id == "minimap" and addon.status == "available" then view:set_checked(addon, true) end
+        end
+      end
       assert(command.perform("plugin-manager:filter"))
-      core.command_view:set_text("editorconfig")
-      core.command_view:update_suggestions()
-      if not mouse_install then core.command_view:submit() end
+      view.search:set_text("editorconfig")
+      view.category_box:set_selected(2)
+      view.details_ratio = 0.35
       wait_for(function() return not view.loading end, "filtered listing stalled")
       assert(view.filter_text == "editorconfig", "filter command did not set the query")
       for i, addon in ipairs(view:get_sorted_plugins()) do
         if addon.id == "editorconfig" and addon.status == "available" then
-          view.selected_plugin_idx, view.selected_plugin = i, addon
+          view:focus_plugin(addon)
           break
         end
       end
       assert(view.selected_plugin, "editorconfig is not available")
+      if batch_install then view:set_checked(view.selected_plugin, true) end
       local file = assert(io.open(phase, "wb"))
       file:write(tostring(system.get_process_id()))
       file:close()
-      if mouse_install then
+      if batch_install then
         -- Initialize geometry explicitly when the headless run has not drawn a frame.
         core.root_view.size.x, core.root_view.size.y = core.window:get_size()
+        core.root_view.root_node:update_layout()
         core.root_view:update()
-        local style = require "core.style"
-        local row_height = style.font:get_height() + style.padding.y
-        local x = view.position.x + style.padding.x * 2
-        local y = view.position.y + row_height * 2.5
+        core.root_view:update()
+        local row
+        for _, addon, item in view.list:each_item() do
+          if addon == view.selected_plugin then row = item; break end
+        end
+        assert(row, "focused row is missing")
+        local x = row.position.x + row.checkbox:get_width() + 40
+        local y = row.position.y + row.size.y / 2
         core.root_view:on_mouse_moved(x, y, 0, 0)
         assert(view.hovered_plugin and view.hovered_plugin.id == "editorconfig",
           "mouse is not over the editorconfig row: " .. common.serialize({
@@ -440,6 +544,27 @@ core.add_thread(function()
         core.root_view:on_mouse_released("left", x, y)
         core.root_view:on_mouse_pressed("left", x, y, 2)
         core.root_view:on_mouse_released("left", x, y)
+        coroutine.yield(0.05)
+        assert(not core.restart_request, "double-click changed a plugin")
+        assert(not system.get_file_info(USERDIR .. PATHSEP .. "plugins/editorconfig/init.lua"),
+          "double-click installed editorconfig")
+        assert(not row.checkbox.checked and not view.checked.editorconfig,
+          "double-click did not clear the editorconfig checkmark")
+        assert(#view:get_checked_plugins("install") == 1, "hidden checked plugin was lost")
+        for _, clicks in ipairs({ 1, 2 }) do
+          core.root_view:on_mouse_pressed("left", x, y, clicks)
+          core.root_view:on_mouse_released("left", x, y)
+        end
+        assert(row.checkbox.checked and view.checked.editorconfig,
+          "double-click did not restore the editorconfig checkmark")
+        assert(#view:get_checked_plugins("install") == 2, "hidden checked plugin was lost")
+        local button = view.batch_buttons.install
+        core.root_view:update()
+        x, y = button.position.x + button.size.x / 2, button.position.y + button.size.y / 2
+        core.root_view:on_mouse_moved(x, y, 0, 0)
+        core.root_view:on_mouse_pressed("left", x, y, 1)
+        core.root_view:on_mouse_released("left", x, y)
+        assert(view.loading, "batch button did not start installation")
       else
         assert(command.perform("plugin-manager:install-selected"))
       end
@@ -452,6 +577,9 @@ core.add_thread(function()
       assert(pid == tostring(system.get_process_id()), "installation did not perform a soft restart")
       assert(system.get_file_info(USERDIR .. PATHSEP .. "plugins/editorconfig/init.lua"),
         "editorconfig was not installed")
+      if batch_install then
+        assert(system.get_file_info(USERDIR .. PATHSEP .. "plugins/minimap.lua"), "minimap was not installed")
+      end
       wait_for(find_view, "Plugin Manager was not restored after restart")
       local view = find_view()
       wait_for(function() return view.initialized and not view.loading end, "restored listing stalled")
@@ -459,6 +587,10 @@ core.add_thread(function()
         "filter was not restored: " .. tostring(view.filter_text))
       assert(#view:get_sorted_plugins() == 1, "restored listing is not filtered")
       assert(view:get_sorted_plugins()[1].id == "editorconfig", "wrong restored addon")
+      assert(view.search:get_text() == "editorconfig", "search control is not restored")
+      assert(view.category == "type:plugin", "category is not restored")
+      assert(view.details_ratio == 0.35, "details pane size is not restored")
+      assert(#view:get_checked_plugins() == 0, "completed selections survived the restart")
       print("EDITORCONFIG RESTART FILTER OK")
       core.quit(true, 0)
     end
@@ -493,7 +625,7 @@ end)
     check_install_restart(context, false)
   end)
 
-  test.test("restores a live editorconfig filter after double-click install and soft restart", function(context)
+  test.test("batch install button preserves filters and clears selections after one soft restart", function(context)
     check_install_restart(context, true)
   end)
 end)

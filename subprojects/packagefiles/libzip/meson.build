@@ -1,4 +1,4 @@
-project('libzip', 'c', version : '1.10.1')
+project('libzip', 'c', version : '1.11.4')
 
 cc = meson.get_compiler('c')
 is_windows = host_machine.system() == 'windows'
@@ -8,8 +8,19 @@ zip_c_args = ['-fvisibility=hidden'] + cc.get_supported_arguments(
 )
 
 zlib_dep = dependency('zlib', fallback : ['zlib', 'zlib_dep'])
+zip_deps = [zlib_dep]
+zip_windows_deps = []
+if is_windows
+  zip_windows_deps += cc.find_library('advapi32')
+  zip_deps += zip_windows_deps
+endif
 
 zipconf = configuration_data()
+zip_version = meson.project_version().split('.')
+zipconf.set_quoted('LIBZIP_VERSION', meson.project_version())
+zipconf.set('LIBZIP_VERSION_MAJOR', zip_version[0])
+zipconf.set('LIBZIP_VERSION_MINOR', zip_version[1])
+zipconf.set('LIBZIP_VERSION_MICRO', zip_version[2])
 zipconf.set('ZIP_STATIC', 1)
 configure_file(
   input : 'zipconf.h.in',
@@ -25,10 +36,13 @@ foreach feature : [
   ['HAVE__DUP', cc.has_function('_dup')],
   ['HAVE__FDOPEN', cc.has_function('_fdopen')],
   ['HAVE__FILENO', cc.has_function('_fileno')],
+  ['HAVE__FSEEKI64', cc.has_function('_fseeki64')],
+  ['HAVE__FSTAT64', cc.has_function('_fstat64', prefix : '#include <sys/stat.h>')],
   ['HAVE__SETMODE', cc.has_function('_setmode')],
   ['HAVE__SNPRINTF', cc.has_header_symbol('stdio.h', '_snprintf', args : zip_feature_args)],
   ['HAVE__SNPRINTF_S', cc.has_header_symbol('stdio.h', '_snprintf_s', args : zip_feature_args)],
   ['HAVE__SNWPRINTF_S', cc.has_header_symbol('stdio.h', '_snwprintf_s', args : zip_feature_args)],
+  ['HAVE__STAT64', cc.has_function('_stat64', prefix : '#include <sys/stat.h>')],
   ['HAVE__STRDUP', cc.has_function('_strdup')],
   ['HAVE__STRICMP', cc.has_header_symbol('string.h', '_stricmp', args : zip_feature_args)],
   ['HAVE__STRTOI64', cc.has_function('_strtoi64')],
@@ -42,6 +56,8 @@ foreach feature : [
   ['HAVE_FSEEKO', cc.has_function('fseeko')],
   ['HAVE_FTELLO', cc.has_function('ftello')],
   ['HAVE_GETPROGNAME', cc.has_function('getprogname')],
+  ['HAVE_GETSECURITYINFO', is_windows and cc.has_function('GetSecurityInfo',
+    prefix : '#include <windows.h>\n#include <aclapi.h>', dependencies : zip_windows_deps)],
   ['HAVE_LOCALTIME_R', cc.has_header_symbol('time.h', 'localtime_r', args : zip_feature_args)],
   ['HAVE_LOCALTIME_S', cc.has_header_symbol('time.h', 'localtime_s', args : zip_feature_args)],
   ['HAVE_MEMCPY_S', cc.has_function('memcpy_s', args : zip_feature_args)],
@@ -57,6 +73,7 @@ foreach feature : [
   ['HAVE_STRNCPY_S', cc.has_function('strncpy_s', args : zip_feature_args)],
   ['HAVE_STRTOLL', cc.has_function('strtoll')],
   ['HAVE_STRTOULL', cc.has_function('strtoull')],
+  ['HAVE_STRUCT_TM_TM_ZONE', cc.has_member('struct tm', 'tm_zone', prefix : '#include <time.h>')],
   ['HAVE_STDBOOL_H', cc.has_header('stdbool.h')],
   ['HAVE_STRINGS_H', cc.has_header('strings.h')],
   ['HAVE_UNISTD_H', cc.has_header('unistd.h')],
@@ -66,6 +83,7 @@ foreach feature : [
     config.set(feature[0], 1)
   endif
 endforeach
+config.set_quoted('VERSION', meson.project_version())
 config.set('SIZEOF_OFF_T', cc.sizeof('off_t', prefix : '#include <sys/types.h>'))
 config.set('SIZEOF_SIZE_T', cc.sizeof('size_t', prefix : '#include <stddef.h>'))
 foreach feature : [
@@ -89,6 +107,12 @@ configure_file(
 zip_dir = include_directories('lib', '.')
 zip_sys = include_directories(is_system : true)
 zip_inc = [zip_dir, zip_sys]
+python = import('python').find_installation()
+zip_errors = configure_file(
+  input : files('lib/zip.h', 'lib/zipint.h'),
+  output : 'zip_err_str.c',
+  command : [python, files('generate_errors.py'), '@INPUT0@', '@INPUT1@', '@OUTPUT@'],
+)
 zip_src = files(
   'lib/zip_add.c',
   'lib/zip_add_dir.c',
@@ -147,6 +171,7 @@ zip_src = files(
   'lib/zip_open.c',
   'lib/zip_pkware.c',
   'lib/zip_progress.c',
+  'lib/zip_realloc.c',
   'lib/zip_rename.c',
   'lib/zip_replace.c',
   'lib/zip_set_archive_comment.c',
@@ -169,6 +194,7 @@ zip_src = files(
   'lib/zip_source_file_stdio.c',
   'lib/zip_source_free.c',
   'lib/zip_source_function.c',
+  'lib/zip_source_get_dostime.c',
   'lib/zip_source_get_file_attributes.c',
   'lib/zip_source_is_deleted.c',
   'lib/zip_source_layered.c',
@@ -199,8 +225,8 @@ zip_src = files(
   'lib/zip_unchange_archive.c',
   'lib/zip_unchange_data.c',
   'lib/zip_utf-8.c',
-  'lib/zip_err_str.c'
 )
+zip_src += zip_errors
 if is_windows
   zip_src += files(
     'lib/zip_random_win32.c',
@@ -227,13 +253,13 @@ zip = static_library(
   override_options : [],
   objects : [],
   c_args : zip_c_args,
-  dependencies : [zlib_dep],
+  dependencies : zip_deps,
   pic : false
 )
 zip_dep = declare_dependency(
   link_with : zip,
   compile_args : [],
   include_directories : zip_inc,
-  dependencies : [zlib_dep],
+  dependencies : zip_deps,
   link_args : []
 )

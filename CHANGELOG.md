@@ -1,3 +1,114 @@
+# 1.7.0
+
+* Redesigned the Plugin Manager with widgets, built-in search, category and
+  status selectors, sorting controls, and a resizable bottom information pane.
+* Added checkbox selection and batch installation, upgrades, and confirmed
+  uninstallation. Selections remain available when hidden by filters.
+* Preserved search, category, status, sorting, selection, list position, and
+  information pane size across soft restarts. Completed selections are cleared
+  before restarting.
+* Made double-clicking rows toggle their checkboxes instead of changing plugins.
+  Opening source or README files no longer resets the list position.
+* Fixed progress and error handling for overlapping ppm processes, including
+  complete stderr reads, initial listing failures, and failed installation state.
+* Matched Pragtical's semantic mod-version compatibility and plugin loading rules.
+* Used Pragtical's `core.json` in the UI and tests, removing the UI's standalone
+  JSON library dependency and installation rule. The UI requires Pragtical 3.10.0
+  or later.
+* Removed the standalone JSON library and obsolete welcome plugin from the
+  repository and addon manifest.
+* Validated all batch uninstall targets before removing files and handled targets
+  already removed by dependency cleanup, while preserving bundled dependencies.
+* Updated mbedTLS to 4.2.0, libgit2 to 1.9.7, libzip to 1.11.4, XZ to 5.8.4,
+  and Lua to 5.5.1. Updated Meson overlays for PCRE2, generated ZIP error tables,
+  compression sources, and platform configuration.
+* Removed `build.sh` and dependency Git submodules. Meson is now the only build
+  system, with dependencies supplied by system libraries or Meson wraps.
+* Replaced the legacy test harness with isolated Pragtical `core.test` suites,
+  covering batch operations, UI navigation, compatibility, soft restarts, and
+  ZIP, gzip, and XZ extraction.
+* Updated the README with Meson build instructions and a repository-hosted
+  screenshot of the new Plugin Manager.
+
+# 1.6.0
+
+* Fixed the Plugin Manager's add/remove repository commands and migrated command
+  prompts to Pragtical's current `CommandView:enter` API.
+* Compared installed archive payloads with cached repository files so matching
+  tree-sitter parsers are not incorrectly reported as upgradable.
+* Allowed dependency cycles whose addons are already queued in the current
+  installation transaction, including mutually dependent tree-sitter languages.
+* Resolved upgrades from repository candidates instead of synthetic installed
+  versions, fixing lookup errors such as `can't find addon treesitter_c:1.0`.
+
+# 1.5.5
+
+* Made all Linux release binaries fully statically linked, avoiding dependencies
+  on a musl dynamic loader that may be missing on the target system.
+* Added the Meson `fully_static` option for the final ppm executable and CI checks
+  that reject Linux release artifacts containing an ELF program interpreter.
+
+# 1.5.4
+
+* Retried mbedTLS `WANT_READ`, `WANT_WRITE`, and TLS 1.3 session-ticket
+  notifications in libgit2 streams instead of treating them as fatal errors.
+  This fixes repository fetching and plugin installation on Windows.
+
+# 1.5.3
+
+* Fixed Meson plugin installation to place ppm in the `plugin_manager` directory
+  and install `json.lua` into Pragtical's libraries directory.
+
+# 1.5.2
+
+* Migrated HTTPS support to mbedTLS 4.1.0 and PSA Crypto, including the libgit2
+  HTTPS backend. Disabled the incompatible bundled NTLM client.
+* Added static dependency wraps and pure Meson builds for libgit2 and libzip.
+* Migrated release CI to Meson and added cross files for Linux, Windows, and
+  Android, with options for release versions, target architectures, and names.
+* Embedded Lua source using Python so builds do not require a host Lua executable
+  or attempt to run a cross-compiled Lua executable.
+* Fixed macOS and Android feature detection for random and sorting helpers, and
+  stopped linking `librt` on Android.
+* Updated the default latest mod-version to 3.11.0.
+
+# 1.5.1
+
+* Restored default repository expansion after a purge, so plugins and colors
+  repositories are populated and available addons appear again.
+* Kept data-directory addons classified as bundled when the repository cache is
+  missing, rather than incorrectly identifying them all as core addons.
+
+# 1.5.0
+
+* Added `Check for Updates` to refresh repository metadata and the listing
+  without installing upgrades. Kept `Refresh Listing` separate from updates.
+* Updated remote-stub repositories for installed addons during `ppm update` and
+  reported available versions for upgradable addons.
+* Added progress feedback for repository updates, installation, uninstallation,
+  upgrades, file downloads, and archive extraction.
+* Improved installed and bundled content comparisons, avoided false upgrades,
+  and let user-installed copies shadow bundled rows.
+* Protected bundled files and dependencies during uninstallation while allowing
+  user-installed overrides to be removed.
+* Added individual upgrade actions and uninstall support for upgradable plugins,
+  with a distinct color for upgradable rows.
+* Matched searches against addon names, IDs, and tags, and displayed differing
+  names as `Plugin Name (id)`. Fixed first-row clicks triggering column sorting.
+* Hid source and README actions for fonts and handled missing unstub payloads
+  without leaving the UI stalled.
+* Protected the running Plugin Manager and JSON library with the `special`
+  status and hid their repository candidates from the UI.
+* Passed the active Pragtical runtime details through `pragtical pm`, fixed
+  Windows command-line invocation, and improved mod-version checks.
+* Added workspace state restoration for the Plugin Manager and fixed restoring
+  older states with missing numeric fields.
+
+# 1.4.7.1
+
+* Updated libgit2, libzip, and zlib dependency revisions.
+* Adjusted macOS CI builds for newer CMake policy requirements.
+
 # 1.4.7
 
 * Fixed UTC timestamp handling.

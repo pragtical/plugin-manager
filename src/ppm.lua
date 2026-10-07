@@ -1161,7 +1161,8 @@ function Addon:get_orphaned_dependencies(bottle, uninstalling)
 end
 
 
-function Addon:uninstall(bottle, uninstalling)
+function Addon:uninstall(bottle, uninstalling, removed)
+  if removed and removed[self.id] then return true end
   if MASK[self.id] then if not uninstalling[self.id] then log.warning("won't uninstall masked addon " .. self.id) end uninstalling[self.id] = true return end
   local install_path = self:get_install_path(bottle)
   if self:is_core(bottle) then error("can't uninstall " .. self.id .. "; is a core addon") end
@@ -1171,7 +1172,7 @@ function Addon:uninstall(bottle, uninstalling)
   if #orphans > 0 and not uninstalling and not prompt("Uninstalling " .. self.id .. " will uninstall the following orphans: " .. common.join(", ", common.map(orphans, function(e) return e.id end)).. ". Do you want to continue?") then
     return false
   end
-  common.each(orphans, function(e) e:uninstall(bottle, common.merge(uninstalling or {}, { [self.id] = true })) end)
+  common.each(orphans, function(e) e:uninstall(bottle, common.merge(uninstalling or {}, { [self.id] = true }), removed) end)
   if self.type == "meta" then
     log.action("Uninstalling meta " .. self.id .. ".", "green")
   else
@@ -1188,9 +1189,11 @@ function Addon:uninstall(bottle, uninstalling)
   end
   if should_uninstall then
     for i,addon in ipairs(incompatible_addons) do
-      if not addon:uninstall(bottle, common.merge(uninstalling or {}, { [self.id] = true })) then return false end
+      if not addon:uninstall(bottle, common.merge(uninstalling or {}, { [self.id] = true }), removed) then return false end
     end
     common.rmrf(install_path)
+    if removed then removed[self.id] = true end
+    bottle:invalidate_cache()
     return true
   end
   return false
@@ -2590,27 +2593,44 @@ end
 
 
 function ppm.addon_uninstall(type, ...)
-  for i, id in ipairs({ ... }) do
+  local targets, seen = {}, {}
+  -- Resolve every target before removing anything; dependency cleanup may remove later targets.
+  for _, id in ipairs({ ... }) do
     local addons = { system_bottle:get_addon(id, nil, { type = type }) }
     if #addons == 0 then error("can't find addon " .. id) end
     local installed_addons = common.grep(addons, function(e) return e:is_installed(system_bottle) and not e:is_core(system_bottle) and not e:is_satisfied_by_bundled(system_bottle) end)
     if #installed_addons == 0 then
       local bundled_addon = common.grep(addons, function(e) return e:is_satisfied_by_bundled(system_bottle) end)[1]
-      if bundled_addon and bundled_addon:is_explicitly_installed(system_bottle) then
-        log.action("Unmarking bundled " .. bundled_addon.type .. " " .. bundled_addon.id .. " as explicitly installed.", "green")
-        settings.installed = common.grep(settings.installed, function(e) return e ~= bundled_addon.id end)
-      elseif bundled_addon then
-        log.action("No user-installed " .. bundled_addon.type .. " " .. bundled_addon.id .. " to uninstall.", "green")
-      else
-        error("addon " .. id .. " not installed")
-      end
+      if not bundled_addon then error("addon " .. id .. " not installed") end
+      installed_addons = { bundled_addon }
     end
-    for i, addon in ipairs(installed_addons) do
-      addon:uninstall(system_bottle)
-      settings.installed = common.grep(settings.installed, function(e) return e ~= addon.id end)
+    if not seen[id] then
+      seen[id] = true
+      targets[#targets + 1] = installed_addons
     end
   end
+  local removed = {}
+  local ok, err = pcall(function()
+    for _, addons in ipairs(targets) do
+      for _, addon in ipairs(addons) do
+        if not removed[addon.id] then
+          if addon:is_satisfied_by_bundled(system_bottle) then
+            if addon:is_explicitly_installed(system_bottle) then
+              log.action("Unmarking bundled " .. addon.type .. " " .. addon.id .. " as explicitly installed.", "green")
+            else
+              log.action("No user-installed " .. addon.type .. " " .. addon.id .. " to uninstall.", "green")
+            end
+            removed[addon.id] = true
+          else
+            addon:uninstall(system_bottle, nil, removed)
+          end
+        end
+      end
+    end
+  end)
+  settings.installed = common.grep(settings.installed, function(id) return not removed[id] end)
   ppm.settings_save()
+  if not ok then error(err, 0) end
 end
 
 function ppm.addon_reinstall(type, ...) for i, id in ipairs({ ... }) do pcall(ppm.addon_uninstall, type, id) end ppm.install(type, ...) end

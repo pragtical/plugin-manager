@@ -6,5 +6,9 @@ ppm.lua.c
 lib/prefix
 src/ppm.luac.c
 src/ppm.luac
+/build*/
+/subprojects/*/
+/subprojects/.wraplock
+!/subprojects/packagefiles/
 lib/mbedtls-2.27.0/build
 lib/mbedtls-2.27.0/tests

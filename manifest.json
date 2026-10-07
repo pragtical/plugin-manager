@@ -2,11 +2,11 @@
   "addons": [
     {
       "id": "plugin_manager",
-      "version": "1.6.1",
+      "version": "1.7.0",
       "description": "A GUI interface to Adam's pragtical plugin manager.",
       "type": "plugin",
       "path": "plugins/plugin_manager",
-      "mod_version": 3,
+      "mod_version": "3.10.0",
       "files": [
         {
           "url": "https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.x86_64-linux",
@@ -62,27 +62,7 @@
           "checksum": "SKIP",
           "optional": true
         }
-      ],
-      "dependencies": {
-        "json": {}
-      }
-    },
-    {
-      "id": "welcome",
-      "description": "A welcome screen for pragtical, that on first start, invites a user to install the meta_addons package, or access the plugin manager.",
-      "type": "plugin",
-      "path": "plugins/welcome.lua",
-      "version": "0.1",
-      "dependencies": {
-        "plugin_manager": {}
-      }
-    },
-    {
-      "id": "json",
-      "version": "1.0",
-      "description": "JSON support plugin, provides encoding/decoding.",
-      "type": "library",
-      "path": "libraries/json.lua"
+      ]
     }
   ],
   "pragticals": [],

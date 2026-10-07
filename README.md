@@ -1,188 +1,131 @@
-**Warning:** This repository could be regularly rebased
-
 # Pragtical Plugin Manager (ppm)
 
-![image](https://user-images.githubusercontent.com/1034518/216748882-3ae8c8d4-a767-4d97-acc4-c1cde7e3e331.png)
+![Pragtical Plugin Manager](screenshots/plugin-manager.png)
 
-A standalone binary that provides an easy way of installing, and uninstalling
-plugins from pragtical, as well as different version of pragtical.
+`ppm` manages Pragtical plugins, colors, fonts, and editor installations. It
+includes the Plugin Manager UI for searching, filtering, and managing addons.
 
-Can be used by a package manager plugin that works from inside the editor
-and calls this binary.
+Both are bundled with official Pragtical releases. Open **Plugin Manager: Show**
+from the command palette (`Ctrl+Shift+P`) to use the UI.
 
-Also contains a `plugin_manager.lua` plugin to integrate the binary with pragtical in
-the form of an easy-to-use GUI.
+The UI plugin requires Pragtical 3.10.0 or later.
 
-By default in releases, `ppm` will automatically consume the `manifest.json`
-in the `latest` branch of this repository, which corresponds to the most
-recent versioned release.
+Release builds use the manifest from this repository's `latest` branch by default.
+See the [changelog](CHANGELOG.md) for release history.
 
-Currently, `ppm`, along with the `plugin_manager` plugin is bundled with
-all official Pragtical releases.
+## Installation
 
-Conforms to [SCPS3](https://github.com/adamharrison/straightforward-c-project-standard#SCPS3).
-
-## Status
-
-`ppm` 1.0 has been just released, and so may still contain bugs, but is generally feature-complete.
-
-## Specification
-
-For details about the `manifest.json` files that `ppm` consumes,
-[see here](SPEC.md).
-
-## Installing
+Download binaries for your platform from the
+[latest release](https://github.com/pragtical/plugin-manager/releases/tag/latest)
+or the [continuous build](https://github.com/pragtical/plugin-manager/releases/tag/continuous).
 
 ### Windows
 
-On Windows, the best way to start, especially if you're used to a visual interface is to simply pull
-`ppm`, and use it to install `plugin_manager`, which will give you a graphical plugin manager inside
-Pragtical that can be accessed with the `Plugin Manager: Show` command (`ctrl+shift+p`).
-
-To get started, open a PowerShell terminal, and run the following:
+Run in PowerShell:
 
 ```powershell
 Invoke-WebRequest -Uri "https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.x86_64-windows.exe" -OutFile "ppm.exe"
 .\ppm.exe install plugin_manager --assume-yes
-Remove-Item ppm.exe
 ```
 
-This should install `ppm` and install the GUI. If you already had Pragtical open, please restart it (`ctrl+alt+r`).
+Alternatively, install the standalone binary with Scoop:
 
-### Linux + Mac
-
-The fastest way to get started with ppm is to simply pull a release.
-
-```sh
-wget https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.x86_64-linux -O ppm && chmod +x ppm
-```
-
-If you want to get the GUI version installed with pragtical, you can tell `ppm` to install `plugin_manager`, which will allow
-you to access `Plugin Manager: Show` in the command palette in `pragtical`.
-
-```sh
-./ppm install plugin_manager --assume-yes
-```
-
-### Compilation
-
-If you have a C compiler, and `git`, and want to compile from scratch,
-you can do:
-
-```sh
-git clone https://github.com/pragtical/plugin-manager.git \
-  --shallow-submodules --recurse-submodules && cd plugin-manager &&\
-  ./build.sh -DPPM_STATIC && ./ppm
-````
-
-If you want to build it quickly, and have the right modules installed, you can
-do:
-
-```sh
-./build.sh -lgit2 -lzip -llua -lm -lmbedtls -lmbedx509 -lmbedcrypto -lz -DPPM_STATIC
-```
-
-OR
-
-```sh
-gcc src/ppm.c lib/microtar/src/microtar.c -Ilib/microtar/src -lz -lgit2 \
-  -lzip -llua -lm -lmbedtls -lmbedx509 -lmbedcrypto -o ppm
-```
-
-CI is enabled on this repository, so you can grab Windows and Linux builds from the
-`continuous` [release page](https://github.com/pragtical/plugin-manager/releases/tag/continuous),
-which is a nightly, or the `latest` [release page](https://github.com/pragtical/plugin-manager/releases/tag/latest),
-which holds the most recent released version.
-
-There are also tagged releases, for specified versions.
-
-You can get a feel for how to use `ppm` by typing `./ppm --help`.
-
-You can also use `scoop` to grab `ppm`:
-
-```
+```powershell
 scoop install https://raw.githubusercontent.com/pragtical/plugin-manager/refs/heads/master/pragtical-plugin-manager.json
 ```
 
-Please note, that _meson_ is _not_ necessarily the best way to compile `ppm`. If you have troubles with it, please do consider using the build.sh script.
+### Linux And macOS
 
-## Supporting Libraries / Dependencies
-
-As seen in the `lib` folder, the following external libraries are used to
-build `ppm` as git submodules:
-
-* `lua` (core program written in)
-* `mbedtls` (https/SSL support)
-* `libgit2` (accessing git repositories directly)
-* `libz` (supporting library for everything)
-* `libzip` (for unpacking .zip files)
-* `libmicrotar` (for unpacking .tar.gz files)
-
-To build, `ppm` only requires a C compiler. To run the underlying build process
-for `mbedtls` and `libgit2`, `cmake` is also required.
-
-## Supported Platforms
-
-`ppm` should work on all platforms `pragtical` works on; but releases are offered for the following:
-
-* Windows x86_64
-* Linux x86_64
-* Linux aarch64
-* MacOS x86_64
-* MacOS aarch64
-* Android 8.0+ x86_64
-* Android 8.0+ x86
-* Android 8.0+ aarch64
-* Android 8.0+ armv7a
-
-Experimental support (i.e. doesn't work) exists for the following platforms:
-
-* Linux riscv64
-
-## Use in CI
-
-To make pre-fab pragtical builds, you can easily use `ppm` in CI. If you had a linux build container, you could do something like:
+For Linux x86_64:
 
 ```sh
-curl https://github.com/pragtical/plugin-manager/releases/download/v0.1/ppm.x86_64-linux > ppm
-export PRAGTICAL_USERDIR=pragtical/data && export PPM_CACHE=/tmp/cache
-./ppm add https://github.com/pragtical/plugin-manager && ./ppm install plugin_manager lsp
+curl -fL https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.x86_64-linux -o ppm
+chmod +x ppm
+./ppm install plugin_manager --assume-yes
 ```
+
+For macOS, replace the asset name with `ppm.x86_64-darwin` or
+`ppm.aarch64-darwin`. Use `ppm.aarch64-linux` for Linux ARM64.
+
+Restart Pragtical after installing the UI plugin.
 
 ## Usage
 
 ```sh
-ppm install aligncarets
-ppm uninstall aligncarets
-```
-
-```sh
+ppm list
+ppm install editorconfig
+ppm uninstall editorconfig
+ppm update
+ppm upgrade
 ppm --help
 ```
 
-## Building & Running
+Use `pragtical pm` in place of `ppm` to invoke the editor's bundled binary.
+For automated installation, pass `--assume-yes` and `--userdir=<directory>`.
 
-### Linux & MacOS & Windows MSYS
+## Building
 
-```
-./build.sh clean && ./build.sh -DPPM_STATIC && ./ppm
+Requires a C compiler, Python 3, Meson, Ninja, and Git. Meson uses system
+libraries when available and downloads missing dependencies through wraps.
+
+```sh
+git clone https://github.com/pragtical/plugin-manager.git
+cd plugin-manager
+meson setup build --buildtype=release -Dstatic=true
+meson compile -C build
+./build/ppm --help
 ```
 
-### Linux -> Windows
+On Windows, the executable is `build/ppm.exe`. The `static` option embeds the
+Lua program so ppm can run without the source tree; it does not make the
+executable fully statically linked.
 
+Dependencies are Lua, mbedTLS 4/TF-PSA-Crypto, libgit2, zlib, liblzma, and libzip.
+The `microtar` sources are vendored in `lib/microtar/`. No Git submodule checkout
+or CMake build is needed.
+
+### Static Dependencies
+
+Build dependencies from the supplied wraps, as CI does:
+
+```sh
+meson setup build-fallback --buildtype=release --wrap-mode=forcefallback \
+  -Dstatic=true
+meson compile -C build-fallback
 ```
-./build.sh clean && HOSTCC=gcc CC=x86_64-w64-mingw32-gcc AR=x86_64-w64-mingw32-gcc-ar WINDRES=x86_64-w64-mingw32-windres \
-CMAKE_DEFAULT_FLAGS="-DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER\ -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=NEVER -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=NEVER -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_INCLUDE_PATH=/usr/share/mingw-w64/include"\
-  GIT2_CONFIGURE="-DDLLTOOL=x86_64-w64-mingw32-dlltool" ./build.sh -DPPM_STATIC -DPPM_VERSION='"'$VERSION-x86_64-windows-`git rev-parse --short HEAD`'"'
+
+Linux release builds also use `-Dfully_static=true` and a musl compiler to
+avoid requiring a dynamic loader on the target system.
+
+### Cross-Compilation
+
+For Windows from Linux, install MinGW-w64 and run:
+
+```sh
+meson setup build-windows --buildtype=release --wrap-mode=forcefallback \
+  --cross-file=cross/x86_64-w64-mingw32.ini -Dstatic=true
+meson compile -C build-windows
 ```
+
+The output is `build-windows/ppm.exe`. Additional files in `cross/` cover Linux
+aarch64/riscv64 musl and Android targets. Put the matching toolchain on `PATH`
+before configuring.
+
+## Platforms
+
+| Platform | Architectures |
+| --- | --- |
+| Windows | x86_64 |
+| Linux | x86_64, aarch64, riscv64 (experimental) |
+| macOS | x86_64, aarch64 |
+| Android 8.0+ | x86_64, x86, aarch64, armv7a |
 
 ## Tests
 
-The suites in `tests/` use Pragtical's `core.test` framework. Build ppm, then
-run them with a Pragtical build that includes the plugin manager:
+The suites use Pragtical's `core.test` framework. Build ppm, then run them with
+a Pragtical build that includes the current Plugin Manager:
 
 ```sh
-meson compile -C build
 pragtical test tests
 ```
 
@@ -194,29 +137,19 @@ SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy \
   ./scripts/run-local build test ../plugin-manager/tests
 ```
 
-`tests/ppm.lua` invokes the real binary against temporary local repositories,
-without downloading upstream plugins or touching the user's ppm cache/config.
-It passes the active runtime's full `MOD_VERSION_STRING` and checks compatibility
-against Pragtical's plugin loader. Set `PPM_BINARY` to an absolute path to test a
-different binary; otherwise it uses `build/ppm` or the packaged binary.
-The remote-stub fixture requires `git`, and the multi-architecture symlink test
-is skipped on Windows. `tests/plugin_manager.lua` covers UI process handling
-and addon selection.
+Integration fixtures use temporary local repositories and isolated ppm
+cache/config directories. Set `PPM_BINARY` to an absolute path to test another
+binary; otherwise the suite uses `build/ppm` or the packaged binary. Remote-stub
+fixtures require Git, and the multi-architecture symlink test is skipped on
+Windows.
 
-## Extra Features
+## Manifest
 
-### Bottles
+See [SPEC.md](SPEC.md) for the manifest format.
+`addons.files.extra.chmod_executable` lists files to mark as executable after
+download or extraction.
 
-### Extra Fields
+## Bug Reports
 
-* `addons.files.extra.chmod_executable`
-
-An array of files to be marked as executable (after extraction, if applicable).
-
-## Bugs
-
-If you find a bug, please create an issue with the following information:
-
-* Your operating system.
-* The commit or version of PPM you're using (`ppm --version` for releases).
-* The exact steps to reproduce in PPM invocations, if possible from a fresh PPM install (targeting an empty folder with `--userdir`).
+Include your operating system, `ppm --version` output, and the commands needed
+to reproduce the issue, preferably with a fresh `--userdir`.

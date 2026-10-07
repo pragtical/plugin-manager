@@ -10,10 +10,13 @@
 #mesondefine HAVE__DUP
 #mesondefine HAVE__FDOPEN
 #mesondefine HAVE__FILENO
+#mesondefine HAVE__FSEEKI64
+#mesondefine HAVE__FSTAT64
 #mesondefine HAVE__SETMODE
 #mesondefine HAVE__SNPRINTF
 #mesondefine HAVE__SNPRINTF_S
 #mesondefine HAVE__SNWPRINTF_S
+#mesondefine HAVE__STAT64
 #mesondefine HAVE__STRDUP
 #mesondefine HAVE__STRICMP
 #mesondefine HAVE__STRTOI64
@@ -29,6 +32,7 @@
 #mesondefine HAVE_FSEEKO
 #mesondefine HAVE_FTELLO
 #mesondefine HAVE_GETPROGNAME
+#mesondefine HAVE_GETSECURITYINFO
 #mesondefine HAVE_GNUTLS
 #mesondefine HAVE_LIBBZ2
 #mesondefine HAVE_LIBLZMA
@@ -67,6 +71,6 @@
 #mesondefine HAVE_SHARED
 
 #define PACKAGE "libzip"
-#define VERSION "1.10.1"
+#mesondefine VERSION
 
 #endif

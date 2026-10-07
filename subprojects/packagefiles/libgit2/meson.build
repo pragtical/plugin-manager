@@ -1,6 +1,8 @@
-project('libgit2', 'c', version : '1.9.0')
+project('libgit2', 'c', version : '1.9.7')
 
 cc = meson.get_compiler('c')
+add_project_arguments('-DPCRE2_STATIC', '-DPCRE2_EXPORT=',
+  '-DPCRE2_EXP_DECL=', '-DPCRE2_EXP_DEFN=', language : 'c')
 host_system = host_machine.system()
 is_windows = host_system == 'windows'
 is_darwin = host_system == 'darwin'
@@ -22,9 +24,9 @@ has_c11_qsort = (
 
 zlib_dep = dependency('zlib', fallback : ['zlib', 'zlib_dep'])
 mbedtls_dep = [
-  dependency('mbedtls', fallback : ['mbedtls', 'mbedtls_dep']),
-  dependency('mbedx509', fallback : ['mbedtls', 'mbedx509_dep']),
-  dependency('mbedcrypto', fallback : ['mbedtls', 'tfpsacrypto_dep']),
+  dependency('mbedtls', version : '>=4.0.0', fallback : ['mbedtls', 'mbedtls_dep']),
+  dependency('mbedx509', version : '>=4.0.0', fallback : ['mbedtls', 'mbedx509_dep']),
+  dependency('tfpsacrypto', fallback : ['mbedtls', 'tfpsacrypto_dep']),
 ]
 
 configure_file(
@@ -85,37 +87,39 @@ configure_file(
 
 pcre_conf = configuration_data()
 foreach feature : [
+  ['HAVE_ASSERT_H', cc.has_header('assert.h')],
   ['HAVE_DIRENT_H', cc.has_header('dirent.h')],
   ['HAVE_SYS_STAT_H', cc.has_header('sys/stat.h')],
   ['HAVE_SYS_TYPES_H', cc.has_header('sys/types.h')],
   ['HAVE_UNISTD_H', cc.has_header('unistd.h')],
   ['HAVE_WINDOWS_H', cc.has_header('windows.h')],
-  ['HAVE_STDINT_H', cc.has_header('stdint.h')],
-  ['HAVE_INTTYPES_H', cc.has_header('inttypes.h')],
-  ['HAVE_BCOPY', cc.has_function('bcopy')],
-  ['HAVE_MEMMOVE', cc.has_function('memmove')],
-  ['HAVE_STRERROR', cc.has_function('strerror')],
-  ['HAVE_STRTOLL', cc.has_function('strtoll')],
-  ['HAVE_STRTOQ', cc.has_function('strtoq')],
-  ['HAVE__STRTOI64', cc.has_function('_strtoi64')],
-  ['PCRE_STATIC', true],
-  ['SUPPORT_PCRE8', true],
-  ['HAVE_LONG_LONG', cc.sizeof('long long') > 0],
-  ['HAVE_UNSIGNED_LONG_LONG', cc.sizeof('unsigned long long') > 0],
+  ['HAVE_MEMFD_CREATE', cc.has_header_symbol('sys/mman.h', 'memfd_create', args : ['-D_GNU_SOURCE'])],
+  ['HAVE_SECURE_GETENV', cc.has_header_symbol('stdlib.h', 'secure_getenv', args : ['-D_GNU_SOURCE'])],
+  ['HAVE_ATTRIBUTE_UNINITIALIZED', cc.compiles('''
+  int main(void) { char buf[128] __attribute__((uninitialized)); (void)buf; return 0; }
+''', args : cc.get_supported_arguments('-Werror=attributes'), name : 'uninitialized attribute')],
+  ['HAVE_BUILTIN_ASSUME', cc.has_function('__assume')],
+  ['HAVE_BUILTIN_MUL_OVERFLOW', cc.compiles('''
+  #include <stddef.h>
+  int main(void) { int a = 0, b = 0; size_t m; return __builtin_mul_overflow(a, b, &m); }
+''', name : '__builtin_mul_overflow')],
+  ['HAVE_BUILTIN_UNREACHABLE', cc.has_function('__builtin_unreachable')],
+  ['SUPPORT_PCRE2_8', true],
+  ['SUPPORT_UNICODE', true],
 ]
   if feature[1]
     pcre_conf.set(feature[0], 1)
   endif
 endforeach
-pcre_conf.set('NEWLINE', '10')
-pcre_conf.set('PCRE_POSIX_MALLOC_THRESHOLD', '10')
-pcre_conf.set('PCRE_LINK_SIZE', '2')
-pcre_conf.set('PCRE_PARENS_NEST_LIMIT', '250')
-pcre_conf.set('PCRE_MATCH_LIMIT', '10000000')
-pcre_conf.set('PCRE_MATCH_LIMIT_RECURSION', '10000000')
-pcre_conf.set('PCREGREP_BUFSIZE', '20480')
+pcre_conf.set('NEWLINE_DEFAULT', 2)
+pcre_conf.set('LINK_SIZE', 2)
+pcre_conf.set('MAX_VARLOOKBEHIND', 255)
+pcre_conf.set('PARENS_NEST_LIMIT', 250)
+pcre_conf.set('HEAP_LIMIT', 20000000)
+pcre_conf.set('MATCH_LIMIT', 10000000)
+pcre_conf.set('MATCH_LIMIT_DEPTH', 'MATCH_LIMIT')
 configure_file(
-  input : 'src/pcre/config.h.in',
+  input : 'src/pcre2/config.h.in',
   output : 'config.h',
   configuration : pcre_conf,
 )
@@ -138,7 +142,7 @@ libgit2_dir = include_directories(
   'src/util',
   'include',
   'deps/llhttp',
-  'deps/pcre',
+  'deps/pcre2',
   'deps/xdiff',
   '.'
 )
@@ -555,32 +559,40 @@ llhttp_dep = declare_dependency(
   include_directories : llhttp_inc,
   link_args : []
 )
-pcre_dir = include_directories('src/pcre', 'deps/pcre', '.')
+pcre_dir = include_directories('src/pcre2', 'deps/pcre2', '.')
 pcre_sys = include_directories(is_system : true)
 pcre_inc = [pcre_dir, pcre_sys]
 pcre_src = files(
-  'deps/pcre/pcre_byte_order.c',
-  'deps/pcre/pcre_chartables.c',
-  'deps/pcre/pcre_compile.c',
-  'deps/pcre/pcre_config.c',
-  'deps/pcre/pcre_dfa_exec.c',
-  'deps/pcre/pcre_exec.c',
-  'deps/pcre/pcre_fullinfo.c',
-  'deps/pcre/pcre_get.c',
-  'deps/pcre/pcre_globals.c',
-  'deps/pcre/pcre_jit_compile.c',
-  'deps/pcre/pcre_maketables.c',
-  'deps/pcre/pcre_newline.c',
-  'deps/pcre/pcre_ord2utf8.c',
-  'deps/pcre/pcre_refcount.c',
-  'deps/pcre/pcre_string_utils.c',
-  'deps/pcre/pcre_study.c',
-  'deps/pcre/pcre_tables.c',
-  'deps/pcre/pcre_ucd.c',
-  'deps/pcre/pcre_valid_utf8.c',
-  'deps/pcre/pcre_version.c',
-  'deps/pcre/pcre_xclass.c',
-  'deps/pcre/pcreposix.c'
+  'deps/pcre2/pcre2_auto_possess.c',
+  'deps/pcre2/pcre2_chartables.c',
+  'deps/pcre2/pcre2_chkdint.c',
+  'deps/pcre2/pcre2_compile.c',
+  'deps/pcre2/pcre2_compile_cgroup.c',
+  'deps/pcre2/pcre2_compile_class.c',
+  'deps/pcre2/pcre2_config.c',
+  'deps/pcre2/pcre2_context.c',
+  'deps/pcre2/pcre2_convert.c',
+  'deps/pcre2/pcre2_dfa_match.c',
+  'deps/pcre2/pcre2_error.c',
+  'deps/pcre2/pcre2_extuni.c',
+  'deps/pcre2/pcre2_find_bracket.c',
+  'deps/pcre2/pcre2_maketables.c',
+  'deps/pcre2/pcre2_match.c',
+  'deps/pcre2/pcre2_match_data.c',
+  'deps/pcre2/pcre2_match_next.c',
+  'deps/pcre2/pcre2_newline.c',
+  'deps/pcre2/pcre2_ord2utf.c',
+  'deps/pcre2/pcre2_pattern_info.c',
+  'deps/pcre2/pcre2_script_run.c',
+  'deps/pcre2/pcre2_serialize.c',
+  'deps/pcre2/pcre2_string_utils.c',
+  'deps/pcre2/pcre2_study.c',
+  'deps/pcre2/pcre2_substitute.c',
+  'deps/pcre2/pcre2_substring.c',
+  'deps/pcre2/pcre2_tables.c',
+  'deps/pcre2/pcre2_ucd.c',
+  'deps/pcre2/pcre2_valid_utf.c',
+  'deps/pcre2/pcre2_xclass.c',
 )
 pcre = static_library(
   'pcre',
@@ -615,7 +627,8 @@ pcre = static_library(
     '-D_DEBUG',
     '-O0',
     '-DGIT_DEFAULT_CERT_LOCATION="/etc/ssl/cert.pem"',
-    '-DHAVE_CONFIG_H'
+    '-DHAVE_CONFIG_H',
+    '-DPCRE2_CODE_UNIT_WIDTH=8',
   ],
   pic : true
 )
@@ -629,7 +642,7 @@ util_dir = include_directories(
   'src/util',
   'include',
   'deps/llhttp',
-  'deps/pcre',
+  'deps/pcre2',
   'deps/xdiff',
   '.'
 )
@@ -787,7 +800,7 @@ xdiff_sys = include_directories(
   'include',
   'src/util',
   'deps/llhttp',
-  'deps/pcre',
+  'deps/pcre2',
   is_system : true
 )
 xdiff_inc = [xdiff_dir, xdiff_sys]
@@ -856,7 +869,7 @@ libgit2package_dir = include_directories(
   'src/util',
   'include',
   'deps/llhttp',
-  'deps/pcre',
+  'deps/pcre2',
   'deps/xdiff',
 )
 libgit2package_sys = include_directories(is_system : true)

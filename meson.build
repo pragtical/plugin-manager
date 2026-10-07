@@ -16,9 +16,9 @@ zlib_dep = dependency('zlib', static: use_static_deps, fallback: ['zlib', 'zlib_
 lzma_dep = dependency('liblzma', static: use_static_deps, fallback: ['liblzma', 'lzma_dep'])
 lua_dep = dependency('lua', static: use_static_deps, fallback: ['lua', 'lua_dep'])
 mbedtls_dep = [
-    dependency('mbedtls', static: use_static_deps, fallback: ['mbedtls', 'mbedtls_dep']),
-    dependency('mbedx509', static: use_static_deps, fallback: ['mbedtls', 'mbedx509_dep']),
-    dependency('mbedcrypto', static: use_static_deps, fallback: ['mbedtls', 'tfpsacrypto_dep']),
+    dependency('mbedtls', version: '>=4.0.0', static: use_static_deps, fallback: ['mbedtls', 'mbedtls_dep']),
+    dependency('mbedx509', version: '>=4.0.0', static: use_static_deps, fallback: ['mbedtls', 'mbedx509_dep']),
+    dependency('tfpsacrypto', static: use_static_deps, fallback: ['mbedtls', 'tfpsacrypto_dep']),
 ]
 libgit2_dep = dependency('libgit2', static: use_static_deps, fallback: ['libgit2', 'libgit2_dep'])
 libzip_dep = dependency('libzip', static: use_static_deps, fallback: ['libzip', 'zip_dep'])
@@ -102,5 +102,4 @@ ppm_exe = executable(ppm_binary_name,
 
 if (get_option('install_plugin'))
     install_subdir('plugins/plugin_manager', install_dir : pragtical_datadir / 'plugins')
-    install_data('libraries/json.lua', install_dir : pragtical_datadir / 'libraries')
 endif

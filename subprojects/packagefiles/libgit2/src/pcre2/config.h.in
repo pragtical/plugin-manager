@@ -1,0 +1,27 @@
+/* config.h for Meson builds */
+
+#mesondefine HAVE_ASSERT_H
+#mesondefine HAVE_BUILTIN_ASSUME
+#mesondefine HAVE_BUILTIN_MUL_OVERFLOW
+#mesondefine HAVE_BUILTIN_UNREACHABLE
+#mesondefine HAVE_ATTRIBUTE_UNINITIALIZED
+#mesondefine HAVE_DIRENT_H
+#mesondefine HAVE_SYS_STAT_H
+#mesondefine HAVE_SYS_TYPES_H
+#mesondefine HAVE_UNISTD_H
+#mesondefine HAVE_WINDOWS_H
+#mesondefine HAVE_MEMFD_CREATE
+#mesondefine HAVE_SECURE_GETENV
+#mesondefine SUPPORT_PCRE2_8
+#mesondefine SUPPORT_UNICODE
+
+#mesondefine LINK_SIZE
+#mesondefine HEAP_LIMIT
+#mesondefine MATCH_LIMIT
+#mesondefine MATCH_LIMIT_DEPTH
+#mesondefine MAX_VARLOOKBEHIND
+#mesondefine NEWLINE_DEFAULT
+#mesondefine PARENS_NEST_LIMIT
+
+#define MAX_NAME_SIZE 128
+#define MAX_NAME_COUNT 10000
