@@ -70,7 +70,7 @@ local function join(joiner, t) local s = "" for i,v in ipairs(t) do if i > 1 the
 
 local running_processes = {}
 local default_arguments = {
-  "--mod-version=" .. (rawget(_G, "MOD_VERSION") or MOD_VERSION_STRING), -- #workaround hack for new system.
+  "--mod-version=" .. (rawget(_G, "MOD_VERSION_STRING") or MOD_VERSION),
   "--datadir=" .. DATADIR,
   "--binary=" .. EXEFILE,
   "--assume-yes"
@@ -101,6 +101,16 @@ local function drain_progress(chunk, options)
   return chunk
 end
 
+local function read_stderr(proc)
+  local chunks = {}
+  while true do
+    local chunk = proc:read_stderr(2048)
+    if not chunk or #chunk == 0 then break end
+    table.insert(chunks, chunk)
+  end
+  return table.concat(chunks)
+end
+
 local function run(cmd, options)
   options = options or {}
   table.insert(cmd, 1, config.plugins.plugin_manager.ppm_binary_path)
@@ -113,7 +123,7 @@ local function run(cmd, options)
   local proc = process.start(cmd)
   if config.plugins.plugin_manager.debug then for i, v in ipairs(cmd) do io.stdout:write((i > 1 and " " or "") .. v) end io.stdout:write("\n") io.stdout:flush() end
   local promise = Promise.new()
-  table.insert(running_processes, { proc, promise, "" })
+  table.insert(running_processes, { proc, promise, "", cmd, options, "" })
   if #running_processes == 1 then
     core.add_thread(function()
       while #running_processes > 0 do
@@ -123,27 +133,28 @@ local function run(cmd, options)
         while i < #running_processes + 1 do
           local v = running_processes[i]
           local still_running = true
+          local stderr = read_stderr(v[1])
+          v[6] = v[6] .. stderr
+          if #stderr > 0 then has_chunk = true end
           while true do
             local chunk = v[1]:read_stdout(2048)
             if config.plugins.plugin_manager.debug and chunk ~= nil then io.stdout:write(chunk) io.stdout:flush() end
             if chunk and #chunk == 0 then break end
             if chunk ~= nil and #chunk > 0 then
               v[3] = v[3] .. chunk
-              v[3] = drain_progress(v[3], options)
+              v[3] = drain_progress(v[3], v[5])
               has_chunk = true
             else
               still_running = false
-              v[3] = drain_progress(v[3], options)
+              v[3] = drain_progress(v[3], v[5])
               if v[1]:returncode() == 0 then
                 v[2]:resolve(v[3])
               else
-                local err = v[1]:read_stderr(2048)
-                core.error("error running " .. join(" ", cmd) .. ": " .. (err or "?"))
-                if err then
-                  v[2]:reject(json.decode(err).error)
-                else
-                  v[2]:reject(err)
-                end
+                local err = v[6] .. read_stderr(v[1])
+                if #err == 0 then err = "ppm exited with code " .. tostring(v[1]:returncode()) end
+                core.error("error running %s: %s", join(" ", v[4]), err)
+                local ok, result = pcall(json.decode, err)
+                v[2]:reject(ok and type(result) == "table" and result.error or err)
               end
               break
             end
@@ -193,7 +204,7 @@ function PluginManager:refresh(options)
     run({ "repo", "list" }, options):done(function(repositories)
       self.repositories = json.decode(repositories)["repositories"]
     end)
-  end)
+  end):fail(function(err) prom:reject(err) end)
   return prom
 end
 
@@ -261,7 +272,7 @@ function PluginManager:get_addons(options)
   else
     self:refresh(options):done(function()
       prom:resolve(self.addons)
-    end):fail(function(arg) promise:reject(arg) end)
+    end):fail(function(arg) prom:reject(arg) end)
   end
   return prom
 end
@@ -324,9 +335,19 @@ function PluginManager:unstub(addon, options)
 end
 
 
+local function compatible_modversion(version)
+  if not version then return true end
+  local major, minor, patch = tostring(version):match("^(%d+)%.?(%d*)%.?(%d*)$")
+  major, minor, patch = tonumber(major), tonumber(minor) or 0, tonumber(patch) or 0
+  return major == MOD_VERSION_MAJOR
+    and minor <= MOD_VERSION_MINOR
+    and (minor < MOD_VERSION_MINOR or patch <= MOD_VERSION_PATCH)
+end
+
+
 function PluginManager:get_addon(name_and_version, options)
   local promise = Promise.new()
-  PluginManager:get_addons(options):done(function()
+  self:get_addons(options):done(function(addons)
     local s = name_and_version:find(":")
     local name, version = name_and_version, nil
     if s then
@@ -334,8 +355,10 @@ function PluginManager:get_addon(name_and_version, options)
       version = name_and_version:sub(s+1)
     end
     local match = false
-    for i, addon in ipairs(PluginManager.addons) do
-      if not addon.mod_version or tostring(addon.mod_version) == tostring(rawget(_G, "MOD_VERSION_MAJOR") or rawget(_G, "MOD_VERSION")) and (addon.version == version or version == nil) then
+    for i, addon in ipairs(addons) do
+      if addon.id == name and compatible_modversion(addon.mod_version)
+        and (version == nil or tostring(addon.version) == version)
+      then
         promise:resolve(addon)
         match = true
         break
@@ -351,58 +374,7 @@ PluginManager.view = require "plugins.plugin_manager.plugin_view"
 
 -- This will be significantly simplified when the plugin loading monolith is broken up a bit.
 if config.plugins.plugin_manager.addons then
-  local target_plugin_directory = config.plugins.plugin_manger.adddon_directory or (USERDIR .. PATHSEP .. "projects" .. PATHSEP .. common.basename(system.absolute_path(".")))
-
-  local mod_version_regex =
-    regex.compile([[--.*mod-version:(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:$|\s)]])
-  local function get_plugin_details(filename)
-    local info = system.get_file_info(filename)
-    if info ~= nil and info.type == "dir" then
-      filename = filename .. PATHSEP .. "init.lua"
-      info = system.get_file_info(filename)
-    end
-    if not info or not filename:match("%.lua$") then return false end
-    local f = io.open(filename, "r")
-    if not f then return false end
-    local priority = false
-    local version_match = false
-    local major, minor, patch
-
-    for line in f:lines() do
-      if not version_match then
-        local _major, _minor, _patch = mod_version_regex:match(line)
-        if _major then
-          _major = tonumber(_major) or 0
-          _minor = tonumber(_minor) or 0
-          _patch = tonumber(_patch) or 0
-          major, minor, patch = _major, _minor, _patch
-
-          version_match = major == MOD_VERSION_MAJOR
-          if version_match then
-            version_match = minor <= MOD_VERSION_MINOR
-          end
-          if version_match then
-            version_match = patch <= MOD_VERSION_PATCH
-          end
-        end
-      end
-
-      if not priority then
-        priority = line:match('%-%-.*%f[%a]priority%s*:%s*(%d+)')
-        if priority then priority = tonumber(priority) end
-      end
-
-      if version_match then
-        break
-      end
-    end
-    f:close()
-    return true, {
-      version_match = version_match,
-      version = major and {major, minor, patch} or {},
-      priority = priority or 100
-    }
-  end
+  local target_plugin_directory = config.plugins.plugin_manager.addon_directory or (USERDIR .. PATHSEP .. "projects" .. PATHSEP .. common.basename(system.absolute_path(".")))
 
   local function replace_string(str, text, replace)
     local offset = 1
@@ -445,9 +417,9 @@ if config.plugins.plugin_manager.addons then
     for _, plugin in ipairs(ordered) do
       local dir = files[plugin.file]
       local name = plugin.file:match("(.-)%.lua$") or plugin.file
-      local is_lua_file, details = get_plugin_details(dir .. PATHSEP .. plugin.file)
+      local details = core.get_plugin_details(dir .. PATHSEP .. plugin.file)
 
-      plugin.valid = is_lua_file
+      plugin.valid = details ~= nil and details ~= false
       plugin.name = name
       plugin.dir = dir
       plugin.priority = details and details.priority or 100
@@ -565,7 +537,7 @@ command.add(nil, {
         local items = {}
         if not PluginManager.addons then return end
         for i, addon in ipairs(PluginManager.addons) do
-          if not addon.mod_version or tostring(addon.mod_version) == tostring(rawget(_G, "MOD_VERSION_MAJOR") or rawget(_G, "MOD_VERSION")) and addon.status == "available" then
+          if addon.status == "available" and compatible_modversion(addon.mod_version) then
             table.insert(items, addon.id .. ":" .. addon.version)
           end
         end
@@ -677,7 +649,7 @@ cli.register {
       if PLATFORM ~= "Windows" then
         local exit_code = os.execute(
           '"' .. config.plugins.plugin_manager.ppm_binary_path .. '" '
-          .. '--mod-version="'..(rawget(_G, "MOD_VERSION") or MOD_VERSION_STRING)..'" '
+          .. '--mod-version="'..(rawget(_G, "MOD_VERSION_STRING") or MOD_VERSION)..'" '
           .. '--datadir="'..DATADIR..'" '
           .. '--userdir="'..USERDIR..'" '
           .. '--binary="'..EXEFILE..'" '
@@ -690,7 +662,7 @@ cli.register {
           string.format(
             'cmd /c ""%s" --userdir="%s" --binary="%s" %s"',
             config.plugins.plugin_manager.ppm_binary_path,
-            USERDIR, EXEFILE, '--mod-version="'..(rawget(_G, "MOD_VERSION") or MOD_VERSION_STRING)..'" --datadir="'..DATADIR..'" '..table.concat(ARGS, " ", start)
+            USERDIR, EXEFILE, '--mod-version="'..(rawget(_G, "MOD_VERSION_STRING") or MOD_VERSION)..'" --datadir="'..DATADIR..'" '..table.concat(ARGS, " ", start)
           )
         )
         os.exit(exit_code or 0)

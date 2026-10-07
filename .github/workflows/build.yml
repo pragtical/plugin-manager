@@ -133,11 +133,6 @@ jobs:
             exit 1
           fi
 
-      # - name: Run Tests
-      #   if: ${{ matrix.config.native }}
-      #   run: |
-      #     cp $BIN ppm && ./ppm test t/run.lua
-
       # - name: Package Debian/Ubuntu
       #   env: { ARCH: "amd64", DESCRIPTION: "A plugin manager for the pragtical text editor.", MAINTAINER: "Adam Harrison <adamdharrison@gmail.com>" }
       #   run: |

@@ -178,7 +178,30 @@ CMAKE_DEFAULT_FLAGS="-DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER\ -DCMAKE_FIND_ROO
 
 ## Tests
 
-To run the test suite, you can use `ppm` to execute the test by doing `./ppm test t/run.lua`. use `FAST=1 ./ppm test t/run.lua` to avoid the costs of tearing down and building up suites each time.
+The suites in `tests/` use Pragtical's `core.test` framework. Build ppm, then
+run them with a Pragtical build that includes the plugin manager:
+
+```sh
+meson compile -C build
+pragtical test tests
+```
+
+With the sibling Pragtical checkout, use its isolated local runner:
+
+```sh
+cd ../pragtical
+SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy \
+  ./scripts/run-local build test ../plugin-manager/tests
+```
+
+`tests/ppm.lua` invokes the real binary against temporary local repositories,
+without downloading upstream plugins or touching the user's ppm cache/config.
+It passes the active runtime's full `MOD_VERSION_STRING` and checks compatibility
+against Pragtical's plugin loader. Set `PPM_BINARY` to an absolute path to test a
+different binary; otherwise it uses `build/ppm` or the packaged binary.
+The remote-stub fixture requires `git`, and the multi-architecture symlink test
+is skipped on Windows. `tests/plugin_manager.lua` covers UI process handling
+and addon selection.
 
 ## Extra Features
 

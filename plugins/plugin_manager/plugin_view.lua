@@ -47,6 +47,7 @@ end
 function PluginView:get_state()
   return {
     sort = self.sort,
+    filter_text = self.filter_text,
     selected_plugin_idx = self.selected_plugin_idx,
     scroll = {
       x = self.scroll.x,
@@ -59,7 +60,9 @@ end
 function PluginView.from_state(state)
   local pv = PluginView()
   pv.sort = state.sort
+  pv.filter_text = state.filter_text
   pv.scroll = state.scroll
+  if pv.initialized then pv:refresh(true) end
   core.add_thread(function()
     while not pv.initialized do
       coroutine.yield(0.3)
@@ -347,6 +350,9 @@ function PluginView:install(plugin)
   return self.plugin_manager:install(plugin, { progress = self.progress_callback }):done(function()
     self.loading = false
     self.selected_plugin, plugin_view.selected_plugin_idx = nil, nil
+  end):fail(function()
+    self.loading = false
+    core.redraw = true
   end)
 end
 
