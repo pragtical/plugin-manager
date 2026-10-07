@@ -1,9 +1,15 @@
 name: Release
 on:
-  push: { branches: [master] }
+  push:
+    branches: [master]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions: write-all
+
+concurrency:
+  group: release-${{ github.sha }}
+  cancel-in-progress: true
 
 jobs:
   build-everything:
