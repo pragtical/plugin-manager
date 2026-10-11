@@ -539,7 +539,8 @@ function PluginView:build_row(row, plugin)
   function row:draw()
     if not self:is_visible() then return false end
     if this.selected_plugin == plugin or self.hovered then
-      renderer.draw_rect(self.position.x, self.position.y, self.size.x, self.size.y, style.line_highlight)
+      renderer.draw_rect(self.parent.position.x, self.position.y,
+        self.parent.size.x, self.size.y, style.line_highlight)
     end
     if this.selected_plugin == plugin then
       renderer.draw_rect(self.position.x, self.position.y, math.max(2, 2 * SCALE), self.size.y, style.accent)

@@ -358,6 +358,7 @@ test.describe("plugin_manager widget view", function()
       uninstall_many = manager.uninstall_many, check_for_updates = manager.check_for_updates,
       unstub = manager.unstub, open_doc = core.open_doc, root_open_doc = core.root_view.open_doc,
       show = core.nag_view.show, active_view = core.active_view,
+      clip_rect_stack = core.clip_rect_stack,
       libraries = config.plugins.plugin_manager.show_libraries
     }
     context.addons = {
@@ -399,6 +400,7 @@ test.describe("plugin_manager widget view", function()
     manager.uninstall_many, manager.check_for_updates = original.uninstall_many, original.check_for_updates
     manager.unstub, core.open_doc, core.root_view.open_doc = original.unstub, original.open_doc, original.root_open_doc
     core.nag_view.show, core.active_view = original.show, original.active_view
+    core.clip_rect_stack = original.clip_rect_stack
     config.plugins.plugin_manager.show_libraries = original.libraries
     context.view:destroy_childs()
     if context.files_root then test.ok(common.rm(context.files_root, true)) end
@@ -409,6 +411,40 @@ test.describe("plugin_manager widget view", function()
       if box.list:get_row_data(index) == data then box:set_selected(index - 1); return end
     end
     test.fail("missing option " .. data)
+  end
+
+  for _, alignment in ipairs { "s", "e" } do
+    for _, highlighted in ipairs { "hovered", "selected" } do
+      test.test("fills the " .. alignment .. " scrollbar gutter for a " .. highlighted .. " row", function(context)
+        local view = context.view
+        view:show()
+        view:set_position(10, 10)
+        view:set_size(1000, 400)
+        view.list.v_scrollbar.alignment = alignment
+        view.list.v_scrollbar:set_forced_status("contracted")
+        for _ = 1, 5 do view:update() end
+        local row = view.list.items[1].row
+        test.ok(row.size.x < view.list.size.x)
+        if highlighted == "selected" then view:focus_plugin(row.data)
+        else row.hovered = true end
+        for _ = 1, 5 do view:update() end
+        local x = alignment == "s" and row.position.x - 1 or row.position.x + row.size.x
+        local y = row.position.y + row.size.y / 2
+        local window = renwindow.create("Plugin Manager row highlight", 1024, 480)
+        core.clip_rect_stack = { { 0, 0, 1024, 480 } }
+        renderer.begin_frame(window)
+        renderer.set_clip_rect(0, 0, 1024, 480)
+        view:draw()
+        renderer.end_frame()
+        local capture = renderer.to_canvas(window, 0, 0, 1024, 480)
+        local r, g, b = capture:get_pixels(math.floor(x), math.floor(y), 1, 1):byte(1, 3)
+        test.same({ r, g, b }, { style.line_highlight[1], style.line_highlight[2], style.line_highlight[3] })
+        if highlighted == "selected" then
+          r, g, b = capture:get_pixels(math.floor(row.position.x), math.floor(y), 1, 1):byte(1, 3)
+          test.same({ r, g, b }, { style.accent[1], style.accent[2], style.accent[3] })
+        end
+      end)
+    end
   end
 
   test.test("combines built-in search, category, and status without refetching", function(context)

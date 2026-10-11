@@ -1,3 +1,8 @@
+# 1.7.1
+
+* Fixed hovered and selected catalog rows to highlight the full list width,
+  including the scrollbar gutter on either side.
+
 # 1.7.0
 
 * Redesigned the Plugin Manager with widgets, built-in search, category and
