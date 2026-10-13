@@ -1,3 +1,9 @@
+# 1.7.2
+
+* Added a Plugin Manager entry to the Tools menu in editors with menu support.
+* Used editor-managed floating context menus where supported, retaining legacy
+  menu routing for older editor versions.
+
 # 1.7.1
 
 * Fixed hovered and selected catalog rows to highlight the full list width,
