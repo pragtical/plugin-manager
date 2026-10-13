@@ -670,6 +670,12 @@ command.add(nil, {
   end,
 })
 
+if core.menu_view then
+  core.menu_view:register({ "tools" }, {
+    { id = "plugin-manager", text = "Plugin Manager…", command = "plugin-manager:show" }
+  }, "plugin_manager")
+end
+
 if pcall(require, "plugins.terminal") then
   local terminal = require "plugins.terminal"
   command.add(nil, {

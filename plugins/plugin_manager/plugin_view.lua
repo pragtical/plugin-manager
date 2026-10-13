@@ -4,6 +4,7 @@ local common = require "core.common"
 local config = require "core.config"
 local command = require "core.command"
 local keymap = require "core.keymap"
+local View = require "core.view"
 local RootView = require "core.rootview"
 local ContextMenu = require "core.contextmenu"
 local Widget = require "widget"
@@ -1091,14 +1092,18 @@ keymap.add {
   ["space"] = "plugin-manager:toggle-selected", ["return"] = "plugin-manager:activate-control",
 }
 
-local root_update, root_draw = RootView.update, RootView.draw
-function RootView:update(...) root_update(self, ...); PluginView.menu:update() end
-function RootView:draw(...) root_draw(self, ...); PluginView.menu:draw() end
-local root_moved, root_pressed = RootView.on_mouse_moved, RootView.on_view_mouse_pressed
-function RootView:on_mouse_moved(...)
-  if PluginView.menu:on_mouse_moved(...) then return end
-  return root_moved(self, ...)
+-- Older editor versions still require manual context-menu routing.
+if not View.set_floating then
+  local root_update, root_draw = RootView.update, RootView.draw
+  function RootView:update(...) root_update(self, ...); PluginView.menu:update() end
+  function RootView:draw(...) root_draw(self, ...); PluginView.menu:draw() end
+  local root_moved = RootView.on_mouse_moved
+  function RootView:on_mouse_moved(...)
+    if PluginView.menu:on_mouse_moved(...) then return end
+    return root_moved(self, ...)
+  end
 end
+local root_pressed = RootView.on_view_mouse_pressed
 function RootView.on_view_mouse_pressed(...)
   return PluginView.menu:on_mouse_pressed(...) or root_pressed(...)
 end
