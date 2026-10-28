@@ -1,3 +1,8 @@
+# 1.7.3
+
+* Scheduled indeterminate progress redraws at 30 FPS when supported by the
+  editor, avoiding continuous redraws while retaining the older-editor fallback.
+
 # 1.7.2
 
 * Added a Plugin Manager entry to the Tools menu in editors with menu support.

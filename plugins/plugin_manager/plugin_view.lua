@@ -785,7 +785,18 @@ end
 
 function PluginView:update()
   self:layout()
-  if self.loading and (not self.progress or not self.progress.percent or self.progress.percent == 0) then core.redraw = true end
+  if self.loading and (not self.progress or not self.progress.percent or self.progress.percent == 0) then
+    local now = system.get_time()
+    local frame = math.floor(now * 30)
+    if frame ~= self.progress_frame then
+      self.progress_frame = frame
+      core.redraw = true
+    end
+    if core.request_update then core.request_update(1 / 30 - now % (1 / 30))
+    else core.redraw = true end
+  else
+    self.progress_frame = nil
+  end
   return PluginView.super.update(self)
 end
 
