@@ -112,6 +112,8 @@ jobs:
           meson setup build-ci \
             --buildtype=release \
             --wrap-mode=forcefallback \
+            --prefix="$PWD/build-ci/install" \
+            -Dstrip=true \
             -Dstatic=true \
             -Drelease_version="$VERSION" \
             -Dfull_version="$FULL_VERSION" \
@@ -122,12 +124,13 @@ jobs:
             "${MESON_ARGS[@]}" \
             "${MESON_CROSS_ARGS[@]}"
           meson compile -C build-ci
+          meson install -C build-ci --no-rebuild
 
       - name: Verify Linux Static Artifact
         if: ${{ matrix.config.platform == 'linux' }}
         run: |
-          file build-ci/$BIN
-          if readelf -l build-ci/$BIN | grep -q 'Requesting program interpreter'; then
+          file "build-ci/install/bin/$BIN"
+          if readelf -l "build-ci/install/bin/$BIN" | grep -q 'Requesting program interpreter'; then
             echo "::error::$BIN is dynamically linked"
             exit 1
           fi
@@ -143,7 +146,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          path: build-ci/${{ env.BIN }}
+          path: build-ci/install/bin/${{ env.BIN }}
           name: ${{ env.BIN }}
 
   build-macos:
@@ -180,6 +183,8 @@ jobs:
           meson setup build-ci \
             --buildtype=release \
             --wrap-mode=forcefallback \
+            --prefix="$PWD/build-ci/install" \
+            -Dstrip=true \
             -Dstatic=true \
             -Drelease_version="$VERSION" \
             -Dfull_version="$FULL_VERSION" \
@@ -187,9 +192,10 @@ jobs:
             -Dbinary_name="$BIN_BASE" \
             -Dc_args="-ffunction-sections -fdata-sections"
           meson compile -C build-ci
+          meson install -C build-ci --no-rebuild
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          path: build-ci/${{ env.BIN }}
+          path: build-ci/install/bin/${{ env.BIN }}
           name: ${{ env.BIN }}

@@ -80,6 +80,16 @@ On Windows, the executable is `build/ppm.exe`. The `static` option embeds the
 Lua program so ppm can run without the source tree; it does not make the
 executable fully statically linked.
 
+To stage a stripped release binary, enable Meson's install-time stripping:
+
+```sh
+meson configure build -Dstrip=true -Dprefix="$PWD/build/install"
+meson install -C build
+```
+
+The stripped copy is `build/install/bin/ppm` (`ppm.exe` on Windows). The
+build-tree executable remains unstripped.
+
 Dependencies are Lua, mbedTLS 4/TF-PSA-Crypto, libgit2, zlib, liblzma, and libzip.
 The `microtar` sources are vendored in `lib/microtar/`. No Git submodule checkout
 or CMake build is needed.

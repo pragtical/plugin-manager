@@ -1,3 +1,9 @@
+# 1.7.4
+
+* Enabled Meson's install-time stripping for all release builds and uploaded
+  installed binaries instead of unstripped build-tree copies.
+* Documented staging stripped release binaries locally.
+
 # 1.7.3
 
 * Scheduled indeterminate progress redraws at 30 FPS when supported by the
