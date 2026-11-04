@@ -725,6 +725,7 @@ end
 
 local function match_version(version, pattern)
   if not pattern then return true end
+  if not version then return false end
   if pattern:find("^>=") then return compare_version(version, pattern:sub(3)) >= 0 end
   if pattern:find("^<=") then return compare_version(version, pattern:sub(3)) <= 0 end
   if pattern:find("^<") then return compare_version(version, pattern:sub(2)) == -1 end
@@ -736,6 +737,365 @@ end
 local function compatible_modversion(pragtical_modversion, addon_modversion)
   local result = compare_version(pragtical_modversion, addon_modversion)
   return result >= 0 and result < 3
+end
+
+local installations = { records = {}, cache = {}, histories = {}, wanted = {}, replacements = {} }
+
+function installations.key(path)
+  local stat = system.stat(path)
+  if stat then path = stat.abs_path
+  elseif not path:find("^[/\\]") and not path:find("^%a:") then path = system.pwd() .. PATHSEP .. path end
+  path = path:gsub("\\", "/"):gsub("/+$", "")
+  local parts = {}
+  for part in path:gmatch("[^/]+") do
+    if part == ".." then table.remove(parts)
+    elseif part ~= "." then parts[#parts + 1] = part end
+  end
+  path = (path:sub(1, 1) == "/" and "/" or "") .. table.concat(parts, "/")
+  return PLATFORM == "windows" and path:lower() or path
+end
+
+function installations.valid_files(files)
+  if type(files) ~= "table" or not next(files) then return false end
+  for name, hash in pairs(files) do
+    if type(name) ~= "string" or name:find("\\", 1, true) or name:find("^[/\\]") or name:find(":") or
+      ("/" .. name .. "/"):find("/%.%./") or type(hash) ~= "string" or
+      #hash ~= 64 or hash:find("[^a-f0-9]") then return false end
+  end
+  return true
+end
+
+function installations.valid_record(record)
+  return type(record) == "table" and type(record.id) == "string" and
+    type(record.type) == "string" and type(record.version) == "string" and
+    record.version:find("^%d+[%w%.%-_]*$") and type(record.repository) == "string" and
+    type(record.metadata) == "table" and record.metadata.id == record.id and
+    (record.metadata.type or "plugin") == record.type and record.metadata.version == record.version and
+    (record.metadata.dependencies == nil or type(record.metadata.dependencies) == "table") and
+    (record.metadata.tags == nil or type(record.metadata.tags) == "table") and
+    installations.valid_files(record.files) and (record.payload == nil or installations.valid_files(record.payload))
+end
+
+function installations.atomic_write(path, contents)
+  common.mkdirp(common.dirname(path))
+  local temporary = path .. ".part"
+  common.write(temporary, contents)
+  local ok, err = pcall(system.replace_file, temporary, path)
+  if not ok then os.remove(temporary); error(err, 0) end
+end
+
+function installations.load()
+  installations.records, installations.histories, installations.wanted = {}, {}, {}
+  installations.cache, installations.replacements, installations.readonly = {}, {}, false
+  local path = CONFIGDIR .. PATHSEP .. "installations.json"
+  local function read(name)
+    if not system.stat(name) then return end
+    local ok, data = pcall(function() return json.decode(common.read(name)) end)
+    if ok and type(data) == "table" and data.schema_version == 1 and type(data.installations) == "table" then return data end
+  end
+  local data = read(path)
+  if not data and system.stat(path) then
+    log.warning("invalid installation ledger; recovering verified records only")
+    data = read(path .. ".bak")
+    if not data then installations.readonly = true end
+  end
+  if data then
+    for key, record in pairs(data.installations) do
+      if type(key) == "string" and installations.valid_record(record) then
+        installations.records[key] = record
+      else log.warning("ignoring invalid installation record") end
+    end
+  end
+  local cache_path = CACHEDIR .. PATHSEP .. "installation-recovery.json"
+  if system.stat(cache_path) then
+    local ok, cached = pcall(function() return json.decode(common.read(cache_path)) end)
+    if ok and type(cached) == "table" and cached.schema_version == 1 and type(cached.entries) == "table" then
+      installations.cache = cached.entries
+    end
+  end
+end
+
+function installations.save()
+  if installations.readonly then error("installation ledger is invalid; restore or remove it before changing plugins") end
+  local path = CONFIGDIR .. PATHSEP .. "installations.json"
+  if system.stat(path) then
+    local ok, previous = pcall(function()
+      local contents = common.read(path)
+      local data = json.decode(contents)
+      return type(data) == "table" and data.schema_version == 1 and contents or nil
+    end)
+    if ok and previous then installations.atomic_write(path .. ".bak", previous) end
+  end
+  installations.atomic_write(path, json.encode({ schema_version = 1, installations = installations.records }))
+end
+
+function installations.files(path, prefix, result, depth)
+  local stat = system.stat(path)
+  if not stat or (depth or 0) > 64 then error("cannot fingerprint installed path " .. path) end
+  result, prefix = result or {}, prefix or ""
+  if stat.type == "file" then result[prefix] = system.hash(path, "file")
+  elseif stat.type == "dir" then
+    for _, file in ipairs(system.ls(path)) do
+      if file:sub(1, 1) ~= "." then
+        installations.files(path .. PATHSEP .. file, prefix .. (prefix ~= "" and "/" or "") .. file, result, (depth or 0) + 1)
+      end
+    end
+  else error("unsupported installed path " .. path) end
+  return result
+end
+
+function installations.matches(files, path)
+  if not installations.valid_files(files) then return false end
+  for name, hash in pairs(files) do
+    local file = path .. (name ~= "" and (PATHSEP .. name:gsub("/", PATHSEP)) or "")
+    local stat = system.stat(file)
+    if not stat or stat.type ~= "file" then return false end
+    local ok, actual = pcall(system.hash, file, "file")
+    if not ok or actual ~= hash then return false end
+  end
+  return true
+end
+
+function installations.fingerprint(files)
+  local entries = {}
+  for _, name in ipairs(common.canonical_order(files)) do entries[#entries + 1] = name .. "\0" .. files[name] end
+  return system.hash(table.concat(entries, "\0"))
+end
+
+local installation_metadata = { "id", "type", "version", "mod_version", "dependencies", "conflicts", "replaces", "provides",
+  "path", "organization", "files", "url", "checksum", "arch", "tags", "name", "description", "extra", "post" }
+
+function installations.signature(value)
+  if type(value) ~= "table" then return json.encode(value) end
+  local entries = {}
+  for _, key in ipairs(common.canonical_order(value)) do
+    entries[#entries + 1] = json.encode(key) .. ":" .. installations.signature(value[key])
+  end
+  return "{" .. table.concat(entries, ",") .. "}"
+end
+
+function installations.recipe(addon)
+  local recipe = {}
+  for _, name in ipairs({ "dependencies", "conflicts", "path", "organization", "url", "checksum", "mod_version", "post" }) do
+    recipe[name] = addon[name]
+  end
+  recipe.files = common.grep(addon.files or {}, function(file) return not file.optional and Addon.file_applies_to_arch(addon, file) end)
+  return installations.signature(recipe)
+end
+
+function installations.version(addon) return addon.available_version or addon.version end
+
+function installations.record(addon, files, commit)
+  local metadata = {}
+  for _, name in ipairs(installation_metadata) do metadata[name] = addon[name] end
+  metadata.version = installations.version(addon)
+  return {
+    id = addon.id, type = addon.type, version = metadata.version,
+    repository = addon.catalog_repository or addon.repository:url(), source_repository = addon.repository:url(),
+    commit = commit, metadata = json.decode(json.encode(metadata)), files = files, payload = files,
+    recipe = installations.recipe(addon)
+  }
+end
+
+function installations.source_matches(record, addon)
+  return record.repository == (addon.catalog_repository or addon.repository:url()) or
+    record.source_repository == addon.repository:url()
+end
+
+-- A legacy copy is adoptable only when all required payloads are available offline.
+function installations.expected(addon, commit)
+  local expected = {}
+  if addon.url then
+    local cache = addon:get_cached_file_path(addon)
+    if not cache then return end
+    expected[addon.organization == "singleton" and "" or "init.lua"] = system.hash(cache, "file")
+  elseif addon.path then
+    local files
+    if commit then files = system.git_read(addon.repository.local_path, commit, addon.path:gsub("\\", "/"), "hashes")
+    elseif addon.local_path and system.stat(addon.local_path) then files = installations.files(addon.local_path) end
+    if not files then return end
+    if files[""] and addon.organization == "complex" then files["init.lua"], files[""] = files[""], nil end
+    common.merge(expected, files)
+  end
+  for _, file in ipairs(addon.files or {}) do
+    if addon:file_applies_to_arch(file) and not file.optional then
+      local cache = addon:get_cached_file_path(file)
+      if not cache then return end
+      local name = file.path or common.basename(file.url)
+      if name:find("%.zip$") or name:find("%.tar%.gz$") or name:find("%.tgz$") or name:find("%.gz$") then
+        local temporary = TMPDIR .. PATHSEP .. "identify" .. PATHSEP .. system.hash(cache .. name)
+        common.rmrf(temporary)
+        common.mkdirp(temporary)
+        local archive = name:find("%.zip$") or name:find("%.tar%.gz$") or name:find("%.tgz$")
+        local target = archive and temporary or (temporary .. PATHSEP .. "payload")
+        local ok, files = pcall(function()
+          system.extract(cache, target)
+          return installations.files(target)
+        end)
+        common.rmrf(temporary)
+        if not ok then return end
+        if archive then common.merge(expected, files)
+        else expected[name:gsub("%.gz$", ""):gsub("\\", "/")] = files[""] end
+      else expected[name:gsub("\\", "/")] = system.hash(cache, "file") end
+    end
+  end
+  return installations.valid_files(expected) and expected or nil
+end
+
+function installations.history(repo)
+  if installations.histories[repo.local_path] then return installations.histories[repo.local_path] end
+  local history, previous, entries = {}, nil, {}
+  local ok, complete = pcall(system.git_history, repo.local_path, function(commit)
+    local oid = system.git_read(repo.local_path, commit, "manifest.json", "oid")
+    if oid ~= previous then
+      previous, entries = oid, {}
+      local contents = oid and system.git_read(repo.local_path, commit, "manifest.json")
+      local valid, manifest = pcall(json.decode, contents or "")
+      if valid and type(manifest) == "table" then
+        for _, metadata in ipairs(manifest.addons or manifest.plugins or {}) do
+          if installations.wanted[metadata.id] and not metadata.remote then entries[#entries + 1] = metadata end
+        end
+      end
+    end
+    history[#history + 1] = { commit = commit, entries = entries }
+    return true
+  end)
+  if not ok or not complete then history = {} end
+  installations.histories[repo.local_path] = history
+  return history
+end
+
+function installations.recover(path, candidates, previous)
+  local found, ambiguous
+  local function accept(record)
+    if found and (found.version ~= record.version or found.repository ~= record.repository) then ambiguous = true end
+    found = found or record
+  end
+  for _, addon in ipairs(candidates) do
+    if not previous or installations.source_matches(previous, addon) then
+      local ok, files = pcall(installations.expected, addon)
+      if ok and files and installations.matches(files, path) then accept(installations.record(addon, files)) end
+    end
+  end
+  if found then return not ambiguous and found or nil end
+  local ok, actual = pcall(installations.files, path)
+  if not ok then return end
+  local visited = {}
+  for _, candidate in ipairs(candidates) do
+    local repo = candidate.repository
+    if (not previous or installations.source_matches(previous, candidate)) and not visited[repo.local_path] then
+      visited[repo.local_path] = true
+      local readable, head = pcall(system.git_read, repo.local_path, "HEAD", ".", "commit")
+      if not readable then head = nil end
+      if head then
+        local key = system.hash(repo.local_path .. head .. candidate.type .. candidate.id .. installations.fingerprint(actual) .. (previous and previous.repository or ""))
+        local cached = installations.cache[key]
+        if cached ~= nil then
+          if installations.valid_record(cached) and cached.id == candidate.id and cached.type == candidate.type and
+            installations.source_matches(cached, candidate) and installations.matches(cached.files, path) then accept(cached) end
+        else
+          log.progress_action("Identifying installed " .. candidate.id .. " from cached history...")
+          local match, conflict, seen = nil, false, {}
+          for _, snapshot in ipairs(installations.history(repo)) do
+            for _, metadata in ipairs(snapshot.entries) do
+              if metadata.id == candidate.id and (metadata.type or "plugin") == candidate.type and metadata.version then
+                local source_path = (metadata.path or "."):gsub("\\", "/")
+                local oid = system.git_read(repo.local_path, snapshot.commit, source_path, "oid")
+                local identity = json.encode(metadata) .. tostring(oid)
+                if not seen[identity] then
+                  seen[identity] = true
+                  local historical = Addon.new(repo, common.merge({}, metadata))
+                  if not metadata.organization then
+                    historical.organization = metadata.files and #metadata.files > 0 and "complex" or
+                      (source_path:find("%.lua$") and "singleton" or "complex")
+                  end
+                  historical.catalog_repository = candidate.catalog_repository
+                  local valid, files = pcall(installations.expected, historical, snapshot.commit)
+                  if valid and files and installations.matches(files, path) then
+                    local record = installations.record(historical, files, snapshot.commit)
+                    if match and match.version ~= record.version then conflict = true end
+                    match = match or record
+                  end
+                end
+              end
+            end
+          end
+          installations.cache[key] = not conflict and match or false
+          if match and not conflict then accept(match) end
+        end
+      end
+    end
+  end
+  local count = 0
+  for _ in pairs(installations.cache) do count = count + 1 end
+  if count > 1024 then installations.cache = {} end
+  pcall(installations.atomic_write, CACHEDIR .. PATHSEP .. "installation-recovery.json",
+    json.encode({ schema_version = 1, entries = installations.cache }))
+  return not ambiguous and found or nil
+end
+
+function installations.inspect(path, candidates, bottle)
+  local key = installations.key(path)
+  local records = bottle.pending_installations or installations.records
+  if bottle.pending_installations then
+    local root = bottle.local_path .. PATHSEP .. "user" .. PATHSEP
+    key = installations.key(bottle.installation_root .. PATHSEP .. path:sub(#root + 1))
+  end
+  local record = records[key]
+  if record and (record.id ~= candidates.id or record.type ~= candidates.type) then record = nil end
+  local clean = record and installations.matches(record.files, path)
+  if not clean then
+    local recovered = installations.recover(path, candidates, record)
+    if recovered then
+      record, clean = recovered, true
+      records[key] = record
+      if not bottle.pending_installations and not installations.readonly then installations.save() end
+    end
+  end
+  local latest, source_exists
+  for _, candidate in ipairs(candidates) do
+    if not record or installations.source_matches(record, candidate) then
+      source_exists = true
+      if bottle.pragtical:is_compatible(candidate) and
+        (not latest or compare_version(installations.version(latest), installations.version(candidate)) < 0) then latest = candidate end
+    end
+  end
+  local state = { record = record, candidate = latest, protected = not clean or not source_exists, status = "orphan", path = path }
+  if record then
+    if source_exists then
+      if not clean then state.status = "modified"
+      elseif not latest then state.status = "installed"
+      elseif compare_version(record.version, installations.version(latest)) < 0 then state.status = "upgradable"
+      else
+        local ok, expected = pcall(installations.expected, latest)
+        local payload_changed = ok and expected and (not installations.matches(expected, path) or
+          (record.payload and installations.fingerprint(record.payload) ~= installations.fingerprint(expected)))
+        local recipe_changed = record.recipe and record.recipe ~= installations.recipe(latest)
+        state.status = compare_version(record.version, installations.version(latest)) == 0 and
+          (payload_changed or recipe_changed) and "upgradable" or "installed"
+      end
+    end
+  elseif #candidates > 0 then state.status = "local" end
+  if latest and (state.status == "upgradable" or state.protected) then state.available_version = installations.version(latest) end
+  return state
+end
+
+function installations.capture(addon, bottle, path)
+  if addon.type == "meta" then return end
+  local record = installations.record(addon, installations.files(path))
+  local ok, payload = pcall(installations.expected, addon)
+  record.payload = ok and payload or nil
+  local target = bottle.installation_root and addon:get_install_path_at(bottle.installation_root) or path
+  if bottle.pending_installations then bottle.pending_installations[installations.key(target)] = record
+  else installations.records[installations.key(target)] = record; installations.save() end
+end
+
+function installations.remove_tree(path)
+  local prefix, changed = installations.key(path) .. "/", false
+  for key in pairs(installations.records) do
+    if key:sub(1, #prefix) == prefix then installations.records[key], changed = nil, true end
+  end
+  if changed then installations.save() end
 end
 
 
@@ -766,6 +1126,8 @@ function Addon.new(repository, metadata)
     name = metadata.id
   }, metadata), Addon)
   self.type = type
+  self.catalog_repository = repository and repository:url() or nil
+  if metadata.unknown_version then self.version = nil end
   -- Directory.
   local plural_type = type == "library" and "libraries" or (type .. "s")
   if not self.path and repository and repository.local_path and system.stat(repository.local_path .. PATHSEP .. plural_type  .. PATHSEP .. self.id .. ".lua") then self.path = plural_type .. PATHSEP .. self.id .. ".lua" end
@@ -790,7 +1152,7 @@ function Addon.new(repository, metadata)
 end
 
 function Addon:get_unique_identifier()
-  return self.id .. ":" .. self.version .. (self.mod_version and ("-" .. self.mod_version) or "")
+  return self.id .. ":" .. (self.version or "") .. (self.mod_version and ("-" .. self.mod_version) or "")
 end
 
 function Addon:is_stub() return self.remote end
@@ -801,6 +1163,7 @@ function Addon:unstub()
   local repo
   local status, err = pcall(function()
     local stub_version = self.version
+    local catalog_repository = self.catalog_repository
     repo = Repository.url(self.remote):fetch_if_not_present()
     local manifest = repo:parse_manifest(self.id)
     local remote_entry = common.grep(manifest['addons'] or manifest['plugins'], function(e) return e.id == self.id end)[1]
@@ -811,6 +1174,7 @@ function Addon:unstub()
     if addon.version ~= self.version then log.warning(self.id .. " stub on " .. self.repository:url() .. " has differing version from remote (" .. self.version .. " vs " .. addon.version .. "); may lead to install being inconsistent") end
     -- if addon.mod_version ~= self.mod_version then log.warning(self.id .. " stub on " .. self.repository:url() .. " has differing mod_version from remote (" .. self.mod_version .. " vs " .. addon.mod_version .. ")") end
     for k,v in pairs(addon) do self[k] = v end
+    self.catalog_repository = catalog_repository
     if repo.branch and stub_version and self.version and compare_version(self.version, stub_version) < 0 then
       self.available_version = stub_version
     end
@@ -902,7 +1266,10 @@ function Addon:get_bundled_path(bottle)
   return self:get_install_path_at(bottle.pragtical.datadir_path)
 end
 
-function Addon:is_orphan(bottle) return not self.repository end
+function Addon:is_orphan(bottle)
+  if self.installation_state then return self.installation_state.status == "orphan" or self.installation_state.status == "local" end
+  return not self.repository
+end
 function Addon:is_core(bottle) return self.location == "core" end
 function Addon:is_bundled(bottle) return self.location == "bundled" end
 function Addon:is_satisfied_by_bundled(bottle)
@@ -925,12 +1292,16 @@ function Addon:is_installed(bottle)
   end
   local install_path = self:get_install_path(bottle)
   if not system.stat(install_path) then return self:is_satisfied_by_bundled(bottle) end
-  if self:is_asset() then return true end
-  local installed_addons = common.grep({ bottle:get_addon(self.id, nil, {  }) }, function(addon) return not addon.repository end)
-  if #common.grep(installed_addons, function(addon) return not addon:is_core(bottle) and not addon:is_bundled(bottle) end) > 0 then return false end
+  bottle:all_addons()
+  local state = bottle.installation_states and bottle.installation_states[installations.key(install_path)]
+  if state then
+    return state.record ~= nil and not state.protected and state.status == "installed" and
+      installations.source_matches(state.record, self) and state.record.version == installations.version(self)
+  end
   return self:matches_install_path(install_path)
 end
 function Addon:is_upgradable(bottle)
+  if self.installation_state then return self.installation_state.status == "upgradable" end
   if self:is_installed(bottle) then
     local addons = { bottle:get_addon(self.id) }
     for i, v in ipairs(addons) do
@@ -941,7 +1312,7 @@ function Addon:is_upgradable(bottle)
   end
   return false
 end
-function Addon:is_installable(bottle) return not self:is_core(bottle) and not self:is_orphan(bottle) end
+function Addon:is_installable(bottle) return self.repository ~= nil and not self:is_core(bottle) end
 function Addon:is_incompatible(addon)
   return (self.dependencies[addon.id] and not match_version(addon.version, self.dependencies[addon.id] and self.dependencies[addon.id].version)) or
     (self.conflicts[addon.id] and match_version(addon.version, self.conflicts[addon.id] and self.conflicts[addon.id].version))
@@ -987,8 +1358,16 @@ function Addon:install(bottle, installing)
   if self:is_stub() then self:unstub() end
   if self.inaccessible then error("addon " .. self.id .. " is inaccessible: " .. self.inaccessible) end
   local install_path = self:get_install_path(bottle)
-  if install_path:find(USERDIR, 1, true) ~= 1 and install_path:find(TMPDIR, 1, true) ~= 1 then error("invalid install path: " .. install_path) end
-  local temporary_install_path = TMPDIR .. PATHSEP .. install_path:sub(((install_path:find(TMPDIR, 1, true) == 1) and #TMPDIR or #USERDIR) + 2)
+  bottle:all_addons()
+  local state = bottle.installation_states and bottle.installation_states[installations.key(install_path)]
+  if state and state.protected and not installations.replacements[self.id] then
+    error("can't replace protected " .. self.id .. "; explicitly reinstall it to replace local or modified files")
+  end
+  if installations.readonly then error("installation ledger is invalid; cannot safely change plugins") end
+  local install_root = bottle.local_path and (bottle.local_path .. PATHSEP .. "user") or USERDIR
+  if install_path:sub(1, #install_root + 1) ~= install_root .. PATHSEP then error("invalid install path: " .. install_path) end
+  local temporary_install_path = install_path:sub(1, #TMPDIR + 1) == TMPDIR .. PATHSEP and install_path or
+    (TMPDIR .. PATHSEP .. "install" .. PATHSEP .. system.hash(install_root) .. PATHSEP .. install_path:sub(#install_root + 2))
 
   local status, err = pcall(function()
     installing = installing or {}
@@ -1025,11 +1404,9 @@ function Addon:install(bottle, installing)
     common.mkdirp(common.dirname(temporary_install_path))
     if self:is_upgradable(bottle) then
       log.action("Upgrading " .. self.organization .. " " .. self.type .. " " .. self.id .. ".", "green")
-      common.rmrf(install_path)
     else
       log.action("Installing " .. self.organization .. " " .. self.type .. " " .. self.id .. ".", "green")
     end
-    if self.organization == "complex" and self.path and common.stat(self.local_path).type ~= "dir" then common.mkdirp(install_path) end
     if self.url then -- remote simple addon
       local path = temporary_install_path .. (self.organization == 'complex' and self.path and system.stat(self.local_path).type ~= "dir" and (PATHSEP .. "init.lua") or "")
       common.get(self.url, { target = path, checksum = self.checksum, callback = write_progress_bar })
@@ -1125,6 +1502,7 @@ function Addon:install(bottle, installing)
       common.mkdirp(common.dirname(install_path))
       common.rename(temporary_install_path, install_path)
     end
+    installations.capture(self, bottle, install_path)
   end
 end
 
@@ -1150,7 +1528,7 @@ function Addon:get_orphaned_dependencies(bottle, uninstalling)
     if dependency then
       if  #common.grep(installed_addons, function(addon) return addon ~= self and addon:depends_on(dependency) and not uninstalling[addon.id] end) == 0
       and not ( dependency:is_explicitly_installed(bottle) or dependency:is_core(bottle) or dependency:is_satisfied_by_bundled(bottle) )
-      then
+      and not (dependency.installation_state and dependency.installation_state.protected) then
         table.insert(t, dependency)
         uninstalling[dependency.id] = true
         t = common.concat(t, dependency:get_orphaned_dependencies(bottle, uninstalling))
@@ -1163,6 +1541,7 @@ end
 
 function Addon:uninstall(bottle, uninstalling, removed)
   if removed and removed[self.id] then return true end
+  if installations.readonly then error("installation ledger is invalid; cannot safely change plugins") end
   if MASK[self.id] then if not uninstalling[self.id] then log.warning("won't uninstall masked addon " .. self.id) end uninstalling[self.id] = true return end
   local install_path = self:get_install_path(bottle)
   if self:is_core(bottle) then error("can't uninstall " .. self.id .. "; is a core addon") end
@@ -1191,7 +1570,12 @@ function Addon:uninstall(bottle, uninstalling, removed)
     for i,addon in ipairs(incompatible_addons) do
       if not addon:uninstall(bottle, common.merge(uninstalling or {}, { [self.id] = true }), removed) then return false end
     end
+    local installation_key = installations.key(install_path)
     common.rmrf(install_path)
+    if installations.records[installation_key] then
+      installations.records[installation_key] = nil
+      installations.save()
+    end
     if removed then removed[self.id] = true end
     bottle:invalidate_cache()
     return true
@@ -1455,11 +1839,14 @@ function Repository:add(pull_remotes, force_update)
       end
     end
   end
+  if system_bottle then system_bottle:invalidate_cache() end
   return self
 end
 
 
 function Repository:update(pull_remotes)
+  if system_bottle and not system_bottle.all_addons_cache then system_bottle:all_addons() end
+  installations.histories = {}
   local manifest, remotes
   if self.branch and (not self:url():find("^http") or not NO_NETWORK) then
     log.progress_action("Updating " .. self:url() .. "...")
@@ -1467,7 +1854,9 @@ function Repository:update(pull_remotes)
     if not status then -- see https://github.com/lite-xl/lite-xl-plugin-manager/issues/85
       if not err:find("object not found %- no match for id") then error(err, 0) end
       common.rmrf(self.local_path)
-      return self:fetch()
+      self:fetch()
+      if system_bottle then system_bottle:invalidate_cache() end
+      return self
     end
     common.reset(self.local_path, self.branch, "hard")
     self.manifest = nil
@@ -1483,6 +1872,7 @@ function Repository:update(pull_remotes)
       end
     end
   end
+  if system_bottle then system_bottle:invalidate_cache() end
   return self
 end
 
@@ -1666,6 +2056,8 @@ function Bottle:construct(hardcopy)
   if self:is_constructed() and not REINSTALL then error("bottle " .. (self.name or self.hash) .. " already constructed") end
   -- swap out the local path for a temporary path while we construct the bottle to make things atomic
   local local_path = self.local_path
+  self.installation_root = local_path .. PATHSEP .. "user"
+  self.pending_installations = {}
   self.local_path = TMPDIR .. PATHSEP .. "bottles" .. PATHSEP .. (self.name or self.hash)
   common.rmrf(self.local_path)
 
@@ -1702,6 +2094,10 @@ function Bottle:construct(hardcopy)
   common.mkdirp(common.dirname(local_path))
   common.rename(self.local_path, local_path)
   self.local_path = local_path
+  common.merge(installations.records, self.pending_installations)
+  self.pending_installations = nil
+  installations.save()
+  self:invalidate_cache()
 end
 
 
@@ -1741,6 +2137,7 @@ function Bottle:destruct()
   if self.is_system then error("system bottle cannot be destructed") end
   if not self:is_constructed() then error("bottle " .. (self.name or self.hash) .. " not constructed") end
   common.rmrf(self.local_path)
+  installations.remove_tree(self.local_path)
 end
 
 function Bottle:run(args)
@@ -1797,11 +2194,22 @@ end
 function Bottle:invalidate_cache()
   self.all_addons_cache = nil
   self.installed_cache = nil
+  self.installation_states = nil
 end
 
 function Bottle:all_addons()
   if self.all_addons_cache then return self.all_addons_cache end
   local t, hash = get_repository_addons()
+  self.installation_states = {}
+  for _, folder in ipairs({ "plugins", "libraries", "fonts", "colors" }) do
+    local directory = (self.local_path and (self.local_path .. PATHSEP .. "user") or USERDIR) .. PATHSEP .. folder
+    if system.stat(directory) then
+      for _, file in ipairs(system.ls(directory)) do
+        local id = common.handleize(file:gsub("%.lua$", ""))
+        if not installations.wanted[id] then installations.wanted[id] = true; installations.histories = {} end
+      end
+    end
+  end
   for _, addon_type in ipairs({ "plugins", "libraries", "fonts", "colors" }) do
     local user_addons = {}
     local addon_paths = {
@@ -1820,6 +2228,17 @@ function Bottle:all_addons()
           local matching = hash[id] and common.grep(hash[id], function(e)
             return e:matches_install_path(path)
           end)[1]
+          local translations = { plugins = "plugin", libraries = "library", fonts = "font", colors = "color" }
+          local state
+          if i == 1 then
+            local candidates = common.grep(hash[id] or {}, function(e) return e.repository and e.type == translations[addon_type] end)
+            candidates.id, candidates.type = candidates[1] and candidates[1].id or id, translations[addon_type]
+            state = installations.inspect(path, candidates, self)
+            self.installation_states[installations.key(path)] = state
+            matching = state.status == "installed" and common.grep(candidates, function(e)
+              return state.record and state.record.version == installations.version(e) and installations.source_matches(state.record, e)
+            end)[1] or nil
+          end
           if (i ~= 2 or not user_addons[id]) and (not hash[id] or not matching) then
             local translations = {
               plugins = "plugin",
@@ -1827,7 +2246,8 @@ function Bottle:all_addons()
               fonts = "font",
               colors = "color"
             }
-            table.insert(t, Addon.new(nil, {
+            local metadata = state and state.record and common.merge({}, state.record.metadata) or {}
+            common.merge(metadata, {
               id = id,
               type = (translations[addon_type] or "plugin"),
               location = (i == 2 and (CORE_PLUGINS[id] and "core" or "bundled")) or "user",
@@ -1840,7 +2260,15 @@ function Bottle:all_addons()
               description = ((hash[id] and hash[id][1]) and hash[id][1].description or nil),
               repo_path = ((hash[id] and hash[id][1]) and hash[id][1].local_path or nil),
               dependencies = ((hash[id] and hash[id][1]) and hash[id][1].dependencies or nil)
-            }))
+            })
+            if state then
+              metadata.installation_state = state
+              metadata.version = state.record and state.record.version or nil
+              metadata.unknown_version = not state.record
+              metadata.dependencies = state.record and state.record.metadata.dependencies or {}
+              metadata.mod_version = state.record and state.record.metadata.mod_version or metadata.mod_version
+            end
+            table.insert(t, Addon.new(nil, metadata))
             if not hash[id] then hash[id] = { t[#t] } end
           end
         end
@@ -1937,7 +2365,7 @@ function Bottle:get_addon(id, version, filter)
     end
   end
   return table.unpack(common.sort(common.uniq(candidates), function (a,b)
-    return (a.replaces == id and b.replaces ~= id) or ((a.id < b.id) and (a.version > b.version) and (not a:is_stub() and b:is_stub()))
+    return (a.replaces == id and b.replaces ~= id) or ((a.id < b.id) and ((a.version or "") > (b.version or "")) and (not a:is_stub() and b:is_stub()))
   end))
 end
 
@@ -2425,6 +2853,7 @@ function ppm.install(type, ...)
   for i, potential_addons in ipairs(potential_addon_list) do
     local id = potential_addons[1].id
     local addons = common.grep(potential_addons, function(e) return e:is_installable(system_bottle) and (not e:is_installed(system_bottle) or REINSTALL) end)
+    if REINSTALL then table.sort(addons, function(a, b) return compare_version(installations.version(a), installations.version(b)) > 0 end) end
     if #addons == 0 and #potential_addons == 0 then error("can't find " .. (type or "addon") .. " " .. id .. " mod-version: " .. (system_bottle.pragtical.mod_version or 'any')) end
     if #addons == 0 then
       log.warning((potential_addons[1].type or "addon") .. " " .. id .. " already installed")
@@ -2438,12 +2867,17 @@ function ppm.install(type, ...)
   end
   if #to_install == 0 and #potential_addon_list == 0 then error("no addons specified for install") end
   local installing = {}
+  installations.replacements = {}
+  if REINSTALL then
+    for _, addons in ipairs(potential_addon_list) do installations.replacements[addons[1].id] = true end
+  end
   common.each(to_install, function(e)
     if not installing[e.id] and (REINSTALL or not e:is_installed(system_bottle)) then
       e:install(system_bottle, installing)
     end
   end)
   settings.installed = common.concat(settings.installed, to_explicitly_install)
+  installations.replacements = {}
   ppm.settings_save()
 end
 
@@ -2466,13 +2900,11 @@ local function get_table(headers, rows, options)
 end
 
 local function get_addon_status(addon)
-  if addon:is_satisfied_by_bundled(system_bottle) then
+  if addon.installation_state then return addon.installation_state.status
+  elseif addon:is_satisfied_by_bundled(system_bottle) then
     return "bundled"
   elseif addon.repository then
     if addon:is_installed(system_bottle) then
-      if addon.available_version and compare_version(addon.version, addon.available_version) < 0 then
-        return "upgradable"
-      end
       return "installed"
     end
     return system_bottle.pragtical:is_compatible(addon) and "available" or "incompatible"
@@ -2498,15 +2930,25 @@ local function print_addon_info(type, addons, filters)
     elseif addon.path and addon.path:find(".lua$") then url = string.format("%s?raw=1", addon.path)
     elseif addon.path then url = addon.path end
     local status = get_addon_status(addon)
+    local state = addon.installation_state or (system_bottle.installation_states and
+      system_bottle.installation_states[installations.key(addon:get_install_path(system_bottle))])
+    local installed = addon.installation_state or (state and addon:is_installed(system_bottle))
+    local version = installed and state.record and state.record.version or (not installed and installations.version(addon) or nil)
+    local available_version = installed and state.available_version or nil
+    local version_display = version or "unknown"
+    if status == "upgradable" then
+      version_display = version == available_version and (version .. " (update available)") or (version_display .. " -> " .. available_version)
+    end
     local hash = {
       id = addon.id,
       status = status,
       stub = (addon:is_stub() and "git" or false),
       name = addon.name or addon.id,
-      version = "" .. addon.version,
-      version_display = addon.available_version and (addon.version .. " -> " .. addon.available_version) or ("" .. addon.version),
-      installed_version = addon.available_version and addon.version or nil,
-      available_version = addon.available_version,
+      version = version,
+      version_display = version_display,
+      installed_version = installed and version or nil,
+      available_version = available_version,
+      protected = state and state.protected or false,
       dependencies = addon.dependencies,
       remote = addon.remote,
       description = addon.description,
@@ -2516,7 +2958,7 @@ local function print_addon_info(type, addons, filters)
       tags = addon.tags,
       type = addon.type,
       organization = addon.organization,
-      repository = addon.repository and addon.repository:url(),
+      repository = addon.repository and addon.repository:url() or (installed and state.record and state.record.repository or nil),
       path = addon:get_path(system_bottle),
       repo_path = addon.repo_path or (addon.repository and addon.repository.local_path or nil),
       url = url
@@ -2547,7 +2989,7 @@ local function print_addon_info(type, addons, filters)
               t = t[v]
               if _G.type(t) ~= "table" then break end
             end
-            return t or ""
+            return t or (header == "version" and "unknown" or "")
           end
         end)
       end)))
@@ -2561,7 +3003,7 @@ local function print_addon_info(type, addons, filters)
         if i ~= 0 then print("---------------------------") end
         print("ID:            " .. addon.id)
         print("Name:          " .. addon.name)
-        print("Version:       " .. addon.version)
+        print("Version:       " .. (addon.version_display or "unknown"))
         print("Status:        " .. addon.status)
         print("Author:        " .. (addon.author or ""))
         print("Type:          " .. addon.type)
@@ -2633,7 +3075,13 @@ function ppm.addon_uninstall(type, ...)
   if not ok then error(err, 0) end
 end
 
-function ppm.addon_reinstall(type, ...) for i, id in ipairs({ ... }) do pcall(ppm.addon_uninstall, type, id) end ppm.install(type, ...) end
+function ppm.addon_reinstall(type, ...)
+  local previous = REINSTALL
+  REINSTALL = true
+  local ok, err = pcall(ppm.install, type, ...)
+  REINSTALL = previous
+  if not ok then error(err, 0) end
+end
 
 function ppm.repo_list()
   if JSON then
@@ -2655,21 +3103,25 @@ end
 
 function ppm.describe()
   local repo_urls = common.grep(common.map(repositories, function(e) return e:url() end), function(url) return #common.grep(DEFAULT_REPOS, function(r) return r:url() == url end) == 0  end)
-  print("ppm run " .. common.join(" ", { system_bottle.pragtical.version, table.unpack(repo_urls) }) .. " " .. common.join(" ", common.map(system_bottle:installed_addons(), function(p) return p.id .. ":" .. p.version end)))
+  print("ppm run " .. common.join(" ", { system_bottle.pragtical.version, table.unpack(repo_urls) }) .. " " .. common.join(" ", common.map(system_bottle:installed_addons(), function(p) return p.id .. (p.version and (":" .. p.version) or "") end)))
 end
 
 function ppm.addon_upgrade()
   local installing = {}
   local upgraded = {}
   for _,addon in ipairs(system_bottle:installed_addons()) do
-    if not upgraded[addon.id] and not addon:is_core(system_bottle) and not addon:is_bundled(system_bottle) then
+    if addon.installation_state and addon.installation_state.protected then
+      log.warning("Skipping protected " .. addon.id .. "; explicitly reinstall to replace local or modified files")
+    elseif not upgraded[addon.id] and not addon:is_core(system_bottle) and not addon:is_bundled(system_bottle) then
       local candidates = common.grep({ system_bottle:get_addon(addon.id) }, function(candidate)
         return candidate.repository and
           candidate:is_installable(system_bottle) and
+          system_bottle.pragtical:is_compatible(candidate) and
+          (not addon.installation_state or not addon.installation_state.record or installations.source_matches(addon.installation_state.record, candidate)) and
           not candidate:is_installed(system_bottle) and
-          (not addon.repository or compare_version(addon.version, candidate.version) < 0)
+          (addon:is_upgradable(system_bottle) or (addon.version and compare_version(addon.version, installations.version(candidate)) < 0))
       end)
-      local upgrade = common.sort(candidates, function(a, b) return compare_version(b.version, a.version) end)[1]
+      local upgrade = common.sort(candidates, function(a, b) return compare_version(installations.version(a), installations.version(b)) > 0 end)[1]
       if upgrade then
         upgrade:install(system_bottle, installing)
         upgraded[upgrade.id] = true
@@ -2774,6 +3226,7 @@ end
 
 function ppm.bottle_purge()
   common.rmrf(BOTTLEDIR)
+  installations.remove_tree(BOTTLEDIR)
   log.action("Purged " .. BOTTLEDIR .. ".", "green")
 end
 
@@ -2797,6 +3250,7 @@ function ppm.setup()
   ppm.repo_init(ARGS[2] == "init" and #ARGS > 2 and (ARGS[3] ~= "none" and common.map(common.slice(ARGS, 3), function(url) return Repository.url(url) end) or {}) or nil)
   repositories, pragticals = {}, {}
   if system.stat(CONFIGDIR .. PATHSEP .. "settings.json") then settings = json.decode(common.read(CONFIGDIR .. PATHSEP .. "settings.json")) end
+  installations.load()
   if REPOSITORY then
     for i, url in ipairs(type(REPOSITORY) == "table" and REPOSITORY or { REPOSITORY }) do
       table.insert(repositories, Repository.url(url):add(AUTO_PULL_REMOTES))

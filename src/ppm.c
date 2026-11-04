@@ -697,6 +697,134 @@ static int ppm_trace(lua_State* L) {
   }
 
 
+  static int ppm_git_history(lua_State* L) {
+    luaL_checktype(L, 2, LUA_TFUNCTION);
+    git_init();
+    git_repository* repository = luaL_checkgitrepo(L, 1);
+    git_revwalk* walk = NULL;
+    int error = git_revwalk_new(&walk, repository);
+    if (!error) {
+      git_revwalk_sorting(walk, GIT_SORT_TOPOLOGICAL | GIT_SORT_TIME);
+      error = git_revwalk_push_head(walk);
+    }
+    git_oid oid;
+    int callback_error = 0;
+    while (!error && !(error = git_revwalk_next(&oid, walk))) {
+      char hex[GIT_OID_SHA1_HEXSIZE + 1];
+      git_oid_tostr(hex, sizeof(hex), &oid);
+      lua_pushvalue(L, 2);
+      lua_pushstring(L, hex);
+      callback_error = lua_pcall(L, 1, 1, 0);
+      if (callback_error) break;
+      int keep_walking = lua_toboolean(L, -1);
+      lua_pop(L, 1);
+      if (!keep_walking) break;
+    }
+    git_revwalk_free(walk);
+    git_repository_free(repository);
+    if (callback_error) return lua_error(L);
+    lua_pushboolean(L, !error || error == GIT_ITEROVER);
+    return 1;
+  }
+
+  static void git_push_blob_hash(lua_State* L, const git_blob* blob) {
+    SHA256_CTX context;
+    unsigned char digest[32];
+    sha256_init(&context);
+    sha256_update(&context, git_blob_rawcontent(blob), git_blob_rawsize(blob));
+    sha256_final(&context, digest);
+    lua_pushhexstring(L, digest, sizeof(digest));
+  }
+
+  static int git_push_tree_hashes(lua_State* L, git_repository* repository, const git_tree* tree, const char* prefix, unsigned depth) {
+    if (depth > 64) return -1;
+    for (size_t i = 0; i < git_tree_entrycount(tree); ++i) {
+      const git_tree_entry* entry = git_tree_entry_byindex(tree, i);
+      const char* name = git_tree_entry_name(entry);
+      if (name[0] == '.') continue;
+      if (strlen(prefix) + strlen(name) + 2 > MAX_PATH) return -1;
+      char path[MAX_PATH];
+      memcpy(path, prefix, strlen(prefix));
+      memcpy(path + strlen(prefix), name, strlen(name) + 1);
+      if (git_tree_entry_type(entry) == GIT_OBJECT_TREE) {
+        git_tree* child = NULL;
+        if (git_tree_lookup(&child, repository, git_tree_entry_id(entry))) return -1;
+        strcat(path, "/");
+        int result = git_push_tree_hashes(L, repository, child, path, depth + 1);
+        git_tree_free(child);
+        if (result) return result;
+      } else if (git_tree_entry_filemode(entry) == GIT_FILEMODE_BLOB || git_tree_entry_filemode(entry) == GIT_FILEMODE_BLOB_EXECUTABLE) {
+        git_blob* blob = NULL;
+        if (git_blob_lookup(&blob, repository, git_tree_entry_id(entry))) return -1;
+        git_push_blob_hash(L, blob);
+        lua_setfield(L, -2, path);
+        git_blob_free(blob);
+      } else {
+        return -1;
+      }
+    }
+    return 0;
+  }
+
+  // Read committed content without checking it out or following Git symlinks.
+  static int ppm_git_read(lua_State* L) {
+    const char* revision = luaL_checkstring(L, 2);
+    const char* path = luaL_checkstring(L, 3);
+    const char* mode = luaL_optstring(L, 4, "file");
+    git_init();
+    git_repository* repository = luaL_checkgitrepo(L, 1);
+    git_object* commit = NULL;
+    git_tree* tree = NULL;
+    git_tree_entry* entry = NULL;
+    git_object* object = NULL;
+    int error = git_revparse_single(&commit, repository, revision);
+    if (!error && git_object_type(commit) != GIT_OBJECT_COMMIT) error = -1;
+    if (!error && !strcmp(mode, "commit")) {
+      char hex[GIT_OID_SHA1_HEXSIZE + 1];
+      git_oid_tostr(hex, sizeof(hex), git_object_id(commit));
+      lua_pushstring(L, hex);
+      git_object_free(commit);
+      git_repository_free(repository);
+      return 1;
+    }
+    if (!error) error = git_commit_tree(&tree, (git_commit*)commit);
+    if (!error) {
+      if (!path[0] || !strcmp(path, ".")) {
+        object = (git_object*)tree;
+        tree = NULL;
+      } else {
+        error = git_tree_entry_bypath(&entry, tree, path);
+        if (!error && git_tree_entry_filemode(entry) == GIT_FILEMODE_LINK) error = -1;
+        if (!error) error = git_tree_entry_to_object(&object, repository, entry);
+      }
+    }
+    if (!error) {
+      if (!strcmp(mode, "oid")) {
+        char hex[GIT_OID_SHA1_HEXSIZE + 1];
+        git_oid_tostr(hex, sizeof(hex), git_object_id(object));
+        lua_pushstring(L, hex);
+      } else if (!strcmp(mode, "hashes")) {
+        lua_newtable(L);
+        if (git_object_type(object) == GIT_OBJECT_BLOB) {
+          git_push_blob_hash(L, (git_blob*)object);
+          lua_setfield(L, -2, "");
+        } else if (git_object_type(object) == GIT_OBJECT_TREE) {
+          error = git_push_tree_hashes(L, repository, (git_tree*)object, "", 0);
+        } else error = -1;
+        if (error) lua_pop(L, 1);
+      } else if (git_object_type(object) == GIT_OBJECT_BLOB) {
+        lua_pushlstring(L, git_blob_rawcontent((git_blob*)object), git_blob_rawsize((git_blob*)object));
+      } else error = -1;
+    }
+    git_object_free(object);
+    git_tree_entry_free(entry);
+    git_tree_free(tree);
+    git_object_free(commit);
+    git_repository_free(repository);
+    if (error) lua_pushnil(L);
+    return 1;
+  }
+
   static int ppm_reset(lua_State* L) {
     git_init();
     git_repository* repository = luaL_checkgitrepo(L, 1);
@@ -908,7 +1036,24 @@ static int ppm_trace(lua_State* L) {
   static int ppm_init(lua_State* L) { return luaL_error(L, "this binary was compiled without git support"); }
   static int ppm_fetch(lua_State* L) { return luaL_error(L, "this binary was compiled without git support"); }
   static int ppm_reset(lua_State* L) { return luaL_error(L, "this binary was compiled without git support"); }
+  static int ppm_git_history(lua_State* L) { return luaL_error(L, "this binary was compiled without git support"); }
+  static int ppm_git_read(lua_State* L) { return luaL_error(L, "this binary was compiled without git support"); }
 #endif
+
+static int ppm_replace_file(lua_State* L) {
+  const char* source = luaL_checkstring(L, 1);
+  const char* target = luaL_checkstring(L, 2);
+  #ifdef _WIN32
+    LPCWSTR wsource = lua_toutf16(L, source);
+    LPCWSTR wtarget = lua_toutf16(L, target);
+    if (!MoveFileExW(wsource, wtarget, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+      return luaL_win32_error(L, GetLastError(), "can't replace file");
+  #else
+    if (rename(source, target))
+      return luaL_error(L, "can't replace %s: %s", target, strerror(errno));
+  #endif
+  return 0;
+}
 
 static int mkdirp(lua_State* L, char* path, int len) {
   for (int i = 0; i < len; ++i) {
@@ -2079,6 +2224,9 @@ static const luaL_Reg system_lib[] = {
   { "init",      ppm_init },     // Initializes a git repository with the specified remote.
   { "fetch",     ppm_fetch },    // Updates a git repository with the specified remote.
   { "reset",     ppm_reset },    // Updates a git repository to the specified commit/hash/branch.
+  { "git_history", ppm_git_history }, // Visits locally reachable commits without changing HEAD.
+  { "git_read",  ppm_git_read }, // Reads committed files, object IDs, or payload hashes.
+  { "replace_file", ppm_replace_file }, // Atomically replaces a file on every supported platform.
   { "request",   ppm_request },  // HTTP(s) GET/HEAD request.
   { "extract",   ppm_extract },  // Extracts .tar.gz, and .zip files.
   { "trace",     ppm_trace },    // Sets trace bit.

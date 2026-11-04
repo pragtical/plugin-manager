@@ -63,6 +63,29 @@ ppm --help
 Use `pragtical pm` in place of `ppm` to invoke the editor's bundled binary.
 For automated installation, pass `--assume-yes` and `--userdir=<directory>`.
 
+### Installed Addons
+
+**Check for Updates** refreshes repository metadata without installing anything.
+Known outdated copies appear as **upgradable**, with their installed and available
+versions. **Upgrade All** upgrades those copies but skips protected installations:
+
+- **Orphaned**: the installed addon has no matching configured repository.
+- **Modified**: files from a tracked installation have been changed locally.
+- **Local**: a repository has the addon, but the installed copy cannot be verified.
+
+Use the status filter to find these copies. **Replace** explicitly replaces a
+protected copy with the repository version after confirmation. From the CLI, use
+`ppm reinstall <id>`. Uninstall remains available for user-owned copies.
+
+Installation versions, sources, and file hashes are stored in
+`~/.config/ppm/installations.json` (or `--configdir`), keyed by installation path
+so profiles and bottles remain independent. Cache purges do not erase this file.
+Older installations are identified from matching payloads or cached Git history,
+without fetching history or changing repository checkouts. Unverifiable versions
+are shown as `unknown`; JSON output omits `version` and `installed_version` rather
+than inventing a version. Extra runtime-generated files are not treated as edits
+to the tracked payload.
+
 ## Building
 
 Requires a C compiler, Python 3, Meson, Ninja, and Git. Meson uses system

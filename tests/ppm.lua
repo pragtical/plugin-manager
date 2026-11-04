@@ -131,6 +131,47 @@ local function create_repository(context)
   write(repo .. PATHSEP .. "manifest.json", json.encode(manifest))
 end
 
+local function set_addon_version(context, id, version, suffix)
+  for _, entry in ipairs(context.manifest.addons) do
+    if entry.id == id then
+      entry.version = version
+      write(context.repo .. PATHSEP .. entry.path,
+        "-- mod-version: " .. entry.mod_version .. "\nreturn {}\n" .. (suffix or ""))
+    end
+  end
+  write(context.repo .. PATHSEP .. "manifest.json", json.encode(context.manifest))
+end
+
+local function receipt(context, id)
+  local path = context.root .. PATHSEP .. "config/installations.json"
+  if not system.get_file_info(path) then return end
+  local ledger = json.decode(read(path))
+  test.equal(ledger.schema_version, 1)
+  for path, record in pairs(ledger.installations) do
+    if record.id == id then return record, path, ledger end
+  end
+end
+
+local function remove_receipts(context)
+  for _, suffix in ipairs({ "", ".bak" }) do
+    local path = context.root .. PATHSEP .. "config/installations.json" .. suffix
+    if system.get_file_info(path) then test.ok(os.remove(path)) end
+  end
+end
+
+local function git(context, ...)
+  local code, stdout, stderr = execute(context, { "git", "-C", context.repo, ... })
+  test.equal(code, 0, stderr)
+  return stdout:gsub("%s+$", "")
+end
+
+local function commit_repository(context, label)
+  git(context, "add", ".")
+  git(context, "-c", "user.name=ppm tests", "-c", "user.email=ppm-tests@example.invalid",
+    "-c", "commit.gpgsign=false", "commit", "-m", label)
+  return git(context, "rev-parse", "HEAD")
+end
+
 test.describe("ppm integration", function()
   test.before_each(function(context)
     local repo_root = common.dirname(common.dirname(context.file))
@@ -213,11 +254,334 @@ test.describe("ppm integration", function()
     ppm(context, { "install", "bracketmatch" })
     local installed = addon(context, "bracketmatch", "installed")
     write(installed.path, read(installed.path) .. "-- changed checksum\n")
-    addon(context, "bracketmatch", "orphan")
+    addon(context, "bracketmatch", "modified")
     addon(context, "bracketmatch", "available")
-    ppm(context, { "install", "bracketmatch" })
+    test.contains(ppm(context, { "install", "bracketmatch" }, { failure = true }).error, "protected")
+    ppm(context, { "install", "bracketmatch", "--reinstall" })
     addon(context, "bracketmatch", "installed")
     test.equal(read(installed.path), read(context.repo .. PATHSEP .. "plugins/bracketmatch.lua"))
+  end)
+
+  test.test("preserves real pre-1.0 versions across repository updates", function(context)
+    set_addon_version(context, "bracketmatch", "0.3")
+    ppm(context, { "install", "bracketmatch" })
+    test.equal(receipt(context, "bracketmatch").version, "0.3")
+    local installed = addon(context, "bracketmatch", "installed")
+    local original = read(installed.path)
+    set_addon_version(context, "bracketmatch", "0.4", "-- updated upstream\n")
+    ppm(context, { "repo", "update" })
+    local updating = addon(context, "bracketmatch", "upgradable")
+    test.equal(updating.version, "0.3")
+    test.equal(updating.installed_version, "0.3")
+    test.equal(updating.available_version, "0.4")
+    test.equal(updating.version_display, "0.3 -> 0.4")
+    test.equal(read(installed.path), original)
+    ppm(context, { "upgrade" })
+    test.equal(addon(context, "bracketmatch", "installed").version, "0.4")
+    test.equal(receipt(context, "bracketmatch").version, "0.4")
+    ppm(context, { "uninstall", "bracketmatch" })
+    test.is_nil(receipt(context, "bracketmatch"))
+  end)
+
+  test.test("recovers a legacy pre-1.0 installation from cached Git history offline", function(context)
+    git(context, "init", "--initial-branch=master")
+    set_addon_version(context, "bracketmatch", "0.3")
+    local old = commit_repository(context, "Old addon")
+    ppm(context, { "install", "bracketmatch" })
+    set_addon_version(context, "bracketmatch", "0.4", "-- updated upstream\n")
+    local head = commit_repository(context, "New addon")
+    remove_receipts(context)
+    local updating = addon(context, "bracketmatch", "upgradable")
+    test.equal(updating.version, "0.3")
+    test.equal(updating.available_version, "0.4")
+    test.equal(receipt(context, "bracketmatch").commit, old)
+    test.equal(git(context, "rev-parse", "HEAD"), head)
+    ppm(context, { "upgrade", "--no-network" })
+    test.equal(addon(context, "bracketmatch", "installed").version, "0.4")
+  end)
+
+  test.test("protects legacy unknown copies even when assume-yes or force is used", function(context)
+    local path = context.userdir .. PATHSEP .. "plugins/bracketmatch.lua"
+    local custom = "-- mod-version: " .. MOD_VERSION_STRING .. "\nreturn { local_copy = true }\n"
+    write(path, custom)
+    local local_copy = addon(context, "bracketmatch", "local")
+    test.is_nil(local_copy.version)
+    test.equal(local_copy.version_display, "unknown")
+    test.equal(local_copy.protected, true)
+    ppm(context, { "upgrade" })
+    test.equal(read(path), custom)
+    test.contains(ppm(context, { "install", "bracketmatch", "--force" }, { failure = true }).error, "protected")
+    ppm(context, { "install", "bracketmatch", "--reinstall" })
+    addon(context, "bracketmatch", "installed")
+  end)
+
+  test.test("does not guess versions when cached history is ambiguous", function(context)
+    git(context, "init", "--initial-branch=master")
+    set_addon_version(context, "bracketmatch", "0.2")
+    commit_repository(context, "First version")
+    set_addon_version(context, "bracketmatch", "0.3")
+    commit_repository(context, "Identical payload with another version")
+    ppm(context, { "install", "bracketmatch" })
+    remove_receipts(context)
+    set_addon_version(context, "bracketmatch", "0.4", "-- new payload\n")
+    commit_repository(context, "Latest version")
+    local entry = addon(context, "bracketmatch", "local")
+    test.is_nil(entry.version)
+    test.equal(entry.protected, true)
+    test.is_nil(receipt(context, "bracketmatch"))
+  end)
+
+  test.test("protects old copies when rewritten history cannot identify them", function(context)
+    git(context, "init", "--initial-branch=master")
+    set_addon_version(context, "bracketmatch", "0.3")
+    commit_repository(context, "Old version")
+    ppm(context, { "install", "bracketmatch" })
+    remove_receipts(context)
+    git(context, "checkout", "--orphan", "rewritten")
+    set_addon_version(context, "bracketmatch", "0.4", "-- rewritten payload\n")
+    commit_repository(context, "New root")
+    local old = read(context.userdir .. PATHSEP .. "plugins/bracketmatch.lua")
+    addon(context, "bracketmatch", "local")
+    ppm(context, { "upgrade", "--no-network" })
+    test.equal(read(context.userdir .. PATHSEP .. "plugins/bracketmatch.lua"), old)
+  end)
+
+  test.test("backfills legacy receipts before fetching remote repository changes", function(context)
+    git(context, "init", "--initial-branch=master")
+    set_addon_version(context, "bracketmatch", "0.3")
+    commit_repository(context, "Old version")
+    ppm(context, { "repo", "rm", common.relative_path(context.cwd, context.repo) })
+    ppm(context, { "repo", "add", "file://" .. context.repo .. ":master" })
+    ppm(context, { "install", "bracketmatch" })
+    remove_receipts(context)
+    set_addon_version(context, "bracketmatch", "0.4", "-- new payload\n")
+    commit_repository(context, "New version")
+    ppm(context, { "update" })
+    local updating = addon(context, "bracketmatch", "upgradable")
+    test.equal(updating.version, "0.3")
+    test.equal(updating.available_version, "0.4")
+    test.equal(receipt(context, "bracketmatch").version, "0.3")
+  end)
+
+  test.test("requires all platform payloads before adopting legacy installations", function(context)
+    local path = context.userdir .. PATHSEP .. "plugins/editorconfig/init.lua"
+    write(path, read(context.repo .. PATHSEP .. "plugins/editorconfig/init.lua"))
+    for _, entry in ipairs(context.manifest.addons) do
+      if entry.id == "editorconfig" then
+        entry.files = { { url = "https://example.invalid/parser.so", checksum = string.rep("0", 64) } }
+      end
+    end
+    write(context.repo .. PATHSEP .. "manifest.json", json.encode(context.manifest))
+    test.equal(addon(context, "editorconfig", "local").protected, true)
+    test.is_nil(receipt(context, "editorconfig"))
+  end)
+
+  test.test("does not overwrite tracked modifications during bulk upgrades", function(context)
+    ppm(context, { "install", "bracketmatch" })
+    local path = addon(context, "bracketmatch", "installed").path
+    local custom = read(path) .. "-- local modification\n"
+    write(path, custom)
+    set_addon_version(context, "bracketmatch", "1.1", "-- upstream update\n")
+    local modified = addon(context, "bracketmatch", "modified")
+    test.equal(modified.version, "1.0")
+    test.equal(modified.available_version, "1.1")
+    ppm(context, { "upgrade" })
+    test.equal(read(path), custom)
+    test.equal(receipt(context, "bracketmatch").version, "1.0")
+    ppm(context, { "reinstall", "bracketmatch" })
+    test.equal(addon(context, "bracketmatch", "installed").version, "1.1")
+  end)
+
+  test.test("preserves modified dependencies during automatic uninstall cleanup", function(context)
+    ppm(context, { "install", "lsp" })
+    local path = context.userdir .. PATHSEP .. "libraries/widget/init.lua"
+    local custom = read(path) .. "-- custom dependency\n"
+    write(path, custom)
+    ppm(context, { "uninstall", "lsp" })
+    test.equal(read(path), custom)
+    addon(context, "widget", "modified")
+    ppm(context, { "uninstall", "widget" })
+    test.is_nil(system.get_file_info(path))
+  end)
+
+  test.test("distinguishes missing repositories from unknown and modified copies", function(context)
+    set_addon_version(context, "bracketmatch", "0.3")
+    ppm(context, { "install", "bracketmatch" })
+    ppm(context, { "repo", "rm", common.relative_path(context.cwd, context.repo) })
+    local orphan = addon(context, "bracketmatch", "orphan")
+    test.equal(orphan.version, "0.3")
+    test.equal(orphan.protected, true)
+    ppm(context, { "uninstall", "bracketmatch" })
+  end)
+
+  test.test("does not downgrade newer installed versions", function(context)
+    set_addon_version(context, "bracketmatch", "0.5")
+    ppm(context, { "install", "bracketmatch" })
+    set_addon_version(context, "bracketmatch", "0.4", "-- older repository contents\n")
+    ppm(context, { "upgrade" })
+    test.equal(addon(context, "bracketmatch", "installed").version, "0.5")
+    test.equal(receipt(context, "bracketmatch").version, "0.5")
+  end)
+
+  test.test("recognizes same-version updates without treating unrelated files as changes", function(context)
+    ppm(context, { "install", "editorconfig" })
+    local path = context.userdir .. PATHSEP .. "plugins/editorconfig"
+    write(path .. PATHSEP .. "generated-cache", "runtime data\n")
+    addon(context, "editorconfig", "installed")
+    set_addon_version(context, "editorconfig", "1.0", "-- changed payload\n")
+    local updating = addon(context, "editorconfig", "upgradable")
+    test.equal(updating.version_display, "1.0 (update available)")
+    ppm(context, { "upgrade" })
+    addon(context, "editorconfig", "installed")
+  end)
+
+  test.test("detects removed payload files in same-version updates", function(context)
+    for _, entry in ipairs(context.manifest.addons) do
+      if entry.id == "editorconfig" then entry.path = "plugins/editorconfig" end
+    end
+    write(context.repo .. PATHSEP .. "manifest.json", json.encode(context.manifest))
+    local extra = context.repo .. PATHSEP .. "plugins/editorconfig/extra.lua"
+    write(extra, "return {}\n")
+    ppm(context, { "install", "editorconfig" })
+    test.ok(os.remove(extra))
+    addon(context, "editorconfig", "upgradable")
+    ppm(context, { "upgrade" })
+    addon(context, "editorconfig", "installed")
+    test.is_nil(system.get_file_info(context.userdir .. PATHSEP .. "plugins/editorconfig/extra.lua"))
+  end)
+
+  test.test("detects dependency changes without a version bump", function(context)
+    ppm(context, { "install", "editorconfig" })
+    for _, entry in ipairs(context.manifest.addons) do
+      if entry.id == "editorconfig" then entry.dependencies = { encoding = {} } end
+    end
+    write(context.repo .. PATHSEP .. "manifest.json", json.encode(context.manifest))
+    addon(context, "editorconfig", "upgradable")
+    ppm(context, { "upgrade" })
+    addon(context, "editorconfig", "installed")
+    addon(context, "encoding", "installed")
+  end)
+
+  test.test("failed downloads preserve installed files and their receipts", function(context)
+    ppm(context, { "install", "editorconfig" })
+    local path = context.userdir .. PATHSEP .. "plugins/editorconfig/init.lua"
+    local contents = read(path)
+    local record = receipt(context, "editorconfig")
+    set_addon_version(context, "editorconfig", "1.1", "-- replacement\n")
+    for _, entry in ipairs(context.manifest.addons) do
+      if entry.id == "editorconfig" then
+        entry.files = { { url = "https://example.invalid/missing.bin", checksum = string.rep("0", 64) } }
+      end
+    end
+    write(context.repo .. PATHSEP .. "manifest.json", json.encode(context.manifest))
+    ppm(context, { "upgrade", "--no-network" }, { failure = true })
+    test.equal(read(path), contents)
+    test.same(receipt(context, "editorconfig"), record)
+    addon(context, "editorconfig", "upgradable")
+  end)
+
+  test.test("scopes installation receipts to profiles sharing a configuration directory", function(context)
+    set_addon_version(context, "bracketmatch", "0.3")
+    ppm(context, { "install", "bracketmatch" })
+    local original_profile = context.userdir
+    context.userdir = context.root .. PATHSEP .. "second-user"
+    test.ok(common.mkdirp(context.userdir))
+    set_addon_version(context, "bracketmatch", "0.4", "-- new version\n")
+    ppm(context, { "install", "bracketmatch" })
+    test.equal(addon(context, "bracketmatch", "installed").version, "0.4")
+    context.userdir = original_profile
+    test.equal(addon(context, "bracketmatch", "upgradable").version, "0.3")
+    local ledger = json.decode(read(context.root .. PATHSEP .. "config/installations.json"))
+    local count = 0
+    for _, record in pairs(ledger.installations) do
+      if record.id == "bracketmatch" then count = count + 1 end
+    end
+    test.equal(count, 2)
+  end)
+
+  test.test("records final bottle paths only after successful construction", function(context)
+    ppm(context, { "bottle", "add", "tracked", "system", "bracketmatch" })
+    local record, path = receipt(context, "bracketmatch")
+    test.not_nil(record)
+    test.contains(path, "/bottles/named/tracked/user/plugins/bracketmatch.lua")
+    ppm(context, { "bottle", "rm", "tracked" })
+    test.is_nil(receipt(context, "bracketmatch"))
+  end)
+
+  test.test("cache purges do not erase managed installation versions", function(context)
+    set_addon_version(context, "bracketmatch", "0.3")
+    ppm(context, { "install", "bracketmatch" })
+    ppm(context, { "cache", "purge" })
+    test.equal(receipt(context, "bracketmatch").version, "0.3")
+    set_addon_version(context, "bracketmatch", "0.4", "-- new payload\n")
+    test.equal(addon(context, "bracketmatch", "upgradable").version, "0.3")
+  end)
+
+  test.test("recovers the previous valid ledger after a corrupted write", function(context)
+    ppm(context, { "install", "bracketmatch" })
+    ppm(context, { "install", "editorconfig" })
+    write(context.root .. PATHSEP .. "config/installations.json", "invalid JSON")
+    test.equal(addon(context, "bracketmatch", "installed").version, "1.0")
+  end)
+
+  test.test("ignores malformed individual receipts without losing valid records", function(context)
+    ppm(context, { "install", "bracketmatch", "editorconfig" })
+    local _, _, ledger = receipt(context, "editorconfig")
+    for _, record in pairs(ledger.installations) do
+      if record.id == "bracketmatch" then record.metadata.version = {} end
+    end
+    write(context.root .. PATHSEP .. "config/installations.json", json.encode(ledger))
+    addon(context, "editorconfig", "installed")
+    addon(context, "bracketmatch", "installed")
+    test.equal(receipt(context, "bracketmatch").version, "1.0")
+  end)
+
+  test.test("failed bottle construction does not publish staged receipts", function(context)
+    for _, entry in ipairs(context.manifest.addons) do
+      if entry.id == "editorconfig" then
+        entry.files = { { url = "https://example.invalid/missing.bin", checksum = string.rep("0", 64) } }
+      end
+    end
+    write(context.repo .. PATHSEP .. "manifest.json", json.encode(context.manifest))
+    ppm(context, { "bottle", "dump", context.root .. PATHSEP .. "bottles/named/failed",
+      "system", "bracketmatch", "editorconfig", "--no-network" }, { failure = true })
+    test.is_nil(receipt(context, "bracketmatch"))
+    test.is_nil(receipt(context, "editorconfig"))
+    test.is_nil(system.get_file_info(context.root .. PATHSEP .. "bottles/named/failed"))
+  end)
+
+  test.test("unknown copies cannot satisfy constrained dependencies or be implicitly replaced", function(context)
+    local path = context.userdir .. PATHSEP .. "plugins/bracketmatch.lua"
+    local contents = "return { custom = true }\n"
+    write(path, contents)
+    for _, entry in ipairs(context.manifest.addons) do
+      if entry.id == "editorconfig" then entry.dependencies = { bracketmatch = { version = ">=1.0" } } end
+    end
+    write(context.repo .. PATHSEP .. "manifest.json", json.encode(context.manifest))
+    ppm(context, { "reinstall", "editorconfig" }, { failure = true })
+    test.equal(read(path), contents)
+    test.is_nil(system.get_file_info(context.userdir .. PATHSEP .. "plugins/editorconfig"))
+  end)
+
+  test.test("refuses mutations when the ledger and its backup are corrupted", function(context)
+    ppm(context, { "install", "bracketmatch" })
+    local path = context.userdir .. PATHSEP .. "plugins/bracketmatch.lua"
+    local contents = read(path)
+    write(context.root .. PATHSEP .. "config/installations.json", "invalid JSON")
+    write(context.root .. PATHSEP .. "config/installations.json.bak", "invalid backup")
+    ppm(context, { "uninstall", "bracketmatch" }, { failure = true })
+    ppm(context, { "reinstall", "bracketmatch" }, { failure = true })
+    test.equal(read(path), contents)
+  end)
+
+  test.test("reconciles a symlink whose repository payload has already changed", function(context)
+    test.skip_if(PLATFORM == "Windows", "local symlinks require developer mode on Windows")
+    set_addon_version(context, "bracketmatch", "0.3")
+    ppm(context, { "install", "bracketmatch", "--symlink" })
+    set_addon_version(context, "bracketmatch", "0.4", "-- new linked payload\n")
+    test.equal(addon(context, "bracketmatch", "installed").version, "0.4")
+    test.equal(receipt(context, "bracketmatch").version, "0.4")
+    ppm(context, { "uninstall", "bracketmatch" })
   end)
 
   test.test("installs and uninstalls a complex addon with a library", function(context)

@@ -166,6 +166,12 @@ local function run(cmd, options)
               still_running = false
               v[3] = drain_progress(v[3], v[5])
               if v[1]:returncode() == 0 then
+                if v[4][2] == "upgrade" and #v[3] > 0 then
+                  local response = decode_response(v[3])
+                  for _, warning in ipairs(response and response.warnings or {}) do
+                    if type(warning) == "string" and warning:find("^Skipping protected ") then core.warn("%s", warning) end
+                  end
+                end
                 v[2]:resolve(v[3])
               else
                 local err = v[6] .. read_stderr(v[1])
@@ -209,7 +215,8 @@ function PluginManager:refresh(options)
     self.valid_addons = {}
     local special_addons = {}
     for i, addon in ipairs(self.addons) do
-      if addon.id == "plugin_manager" and (addon.status == "installed" or addon.status == "orphan" or addon.status == "upgradable") then
+      if addon.id == "plugin_manager" and (addon.status == "installed" or addon.status == "orphan" or addon.status == "upgradable"
+        or addon.status == "local" or addon.status == "modified") then
         addon.status = "special"
         special_addons[addon.id] = true
       end
@@ -367,7 +374,9 @@ end
 
 function PluginManager:install(addon, options) return self:install_many({ addon }, options) end
 function PluginManager:upgrade_addon(addon, options) return self:upgrade_many({ addon }, options) end
-function PluginManager:reinstall(addon, options) return run_stateful_plugin_command(self, "install", { addon.id .. (addon.version and (":" .. addon.version) or ""), "--reinstall" }, options) end
+function PluginManager:reinstall(addon, options)
+  return run_stateful_plugin_command(self, "install", { addon.id, "--reinstall" }, options)
+end
 function PluginManager:uninstall(addon, options) return self:uninstall_many({ addon }, options) end
 function PluginManager:unstub(addon, options)
   options = options or {}

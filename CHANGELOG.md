@@ -1,3 +1,20 @@
+# 1.8.0
+
+* Preserved installed addon versions, sources, and payload hashes outside the
+  repository cache, fixing outdated addons incorrectly appearing as orphaned.
+* Identified older installations from verified payloads and cached Git history
+  without fetching history or changing repository checkouts. Unverifiable
+  versions now display as unknown instead of defaulting to 1.0.
+* Added Orphaned, Modified, and Local status filters. Protected local copies and
+  edits are skipped by automatic upgrades and require confirmed replacement.
+* Detected same-version payload and dependency updates while ignoring unrelated
+  runtime-generated files and avoiding automatic downgrades.
+* Preserved installed files and tracking records when upgrade downloads fail,
+  isolated records by profile and bottle, and recovered valid ledger backups.
+* Dimmed non-interactive category, status, and sorting dropdown headers.
+* Added regression coverage for version recovery, protected copies, failed
+  operations, bottle staging, shared profiles, and corrupted tracking data.
+
 # 1.7.4
 
 * Enabled Meson's install-time stripping for all release builds and uploaded

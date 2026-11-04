@@ -41,7 +41,9 @@ local function row_key(plugin)
 end
 
 local function status_color(status)
-  if status == "installed" or status == "bundled" or status == "orphan" then return style.good end
+  if status == "installed" or status == "bundled" then return style.good end
+  if status == "orphan" or status == "modified" then return style.warn end
+  if status == "local" then return style.dim end
   if status == "upgradable" then return style.accent end
   if status == "core" then return style.warn end
   if status == "special" then return style.modified end
@@ -58,10 +60,13 @@ end
 
 local function eligible(plugin, action)
   if not plugin then return false end
-  if action == "install" then return plugin.status == "available" end
-  if action == "upgrade" then return plugin.status == "upgradable" end
+  if action == "install" then return plugin.status == "available" and not plugin.protected end
+  if action == "upgrade" then return plugin.status == "upgradable" and not plugin.protected end
+  if action == "reinstall" then return plugin.status ~= "special" and plugin.protected and
+    (plugin.available_version ~= nil or plugin.status == "available") end
   if action == "uninstall" then
-    return (plugin.status == "installed" or plugin.status == "orphan" or plugin.status == "upgradable")
+    return (plugin.status == "installed" or plugin.status == "orphan" or plugin.status == "upgradable"
+      or plugin.status == "local" or plugin.status == "modified")
       and inside_userdir(plugin.path)
   end
   return false
@@ -119,6 +124,26 @@ function FittedLabel:draw()
 end
 
 local CatalogSelectBox = SelectBox:extend()
+function CatalogSelectBox:new(...)
+  CatalogSelectBox.super.new(self, ...)
+  local draw_row, click, pressed = self.list.draw_row, self.list.on_click, self.list.on_mouse_pressed
+  function self.list:draw_row(index, x, y, only_calc)
+    if index ~= 1 then return draw_row(self, index, x, y, only_calc) end
+    local color, selected, mouse = self.foreground_color, self.selected_row, self.mouse
+    self.foreground_color, self.selected_row, self.mouse = style.dim, 0, { x = -math.huge, y = -math.huge }
+    local width, height = draw_row(self, index, x, y, only_calc)
+    self.foreground_color, self.selected_row, self.mouse = color, selected, mouse
+    return width, height
+  end
+  function self.list:on_click(button, x, y)
+    if self:get_row_at_position(x, y) == 1 then return end
+    return click(self, button, x, y)
+  end
+  function self.list:on_mouse_pressed(button, x, y, clicks)
+    if self:get_row_at_position(x, y) == 1 then return true end
+    return pressed(self, button, x, y, clicks)
+  end
+end
 function CatalogSelectBox:update_size_position()
   CatalogSelectBox.super.update_size_position(self)
   local _, height = system.get_window_size(core.window)
@@ -330,7 +355,8 @@ function PluginView:build_controls()
   self.status_box = CatalogSelectBox(self.filter_bar, "Status")
   self.status_box:set_tooltip("Status")
   for _, option in ipairs({ { "All statuses", "all" }, { "Available", "available" },
-    { "Installed", "installed" }, { "Updates", "upgradable" } }) do
+    { "Installed", "installed" }, { "Updates", "upgradable" }, { "Orphaned", "orphan" },
+    { "Modified", "modified" }, { "Local", "local" } }) do
     self.status_box:add_option(option[1], option[2])
   end
   function self.status_box:on_change()
@@ -401,11 +427,12 @@ function PluginView:build_controls()
   self.details_header.border.width = 0
   self.details_title = FittedLabel(self.details_header, "No plugin selected")
   self.details_buttons, self.details_controls = {}, {}
-  for _, action in ipairs({ "install", "upgrade", "uninstall", "source", "readme" }) do
-    local labels = { install = "Install", upgrade = "Upgrade", uninstall = "Uninstall", source = "Source", readme = "README" }
+  for _, action in ipairs({ "install", "upgrade", "reinstall", "uninstall", "source", "readme" }) do
+    local labels = { install = "Install", upgrade = "Upgrade", reinstall = "Replace", uninstall = "Uninstall", source = "Source", readme = "README" }
     local button = ActionButton(self.details_header, labels[action], action == "source" and "f" or "p", function()
       local plugin = this.selected_plugin
       if action == "source" or action == "readme" then this:open_file(plugin, action)
+      elseif action == "reinstall" then this:reinstall(plugin)
       else this:apply_action(action, { plugin }) end
     end)
     button:set_tooltip(labels[action])
@@ -940,7 +967,19 @@ function PluginView:uninstall(plugin) return self:apply_action("uninstall", { pl
 function PluginView:upgrade() return self:operate("upgrade") end
 function PluginView:check_for_updates() return self:operate("check_for_updates") end
 function PluginView:unstub(plugin) return self:operate("unstub", plugin) end
-function PluginView:reinstall(plugin) return self:operate("reinstall", plugin) end
+function PluginView:reinstall(plugin)
+  if self.loading or self.confirming or not eligible(plugin, "reinstall") then return end
+  local promise = self.plugin_manager.promise.new()
+  self.confirming = true
+  core.nag_view:show("Replace local plugin?", "Replace " .. display_name(plugin) .. " with repository version "
+    .. tostring(plugin.available_version or plugin.version) .. "? Local changes will be lost.",
+    { { text = "Replace" }, { text = "Cancel", default_yes = true } }, function(option)
+      self.confirming = false
+      if option.text == "Replace" then self:operate("reinstall", plugin):forward(promise)
+      else promise:resolve(false); self:update_controls() end
+    end)
+  return promise
+end
 
 function PluginView:open_file(plugin, kind)
   if not plugin or plugin.type == "font" then return end
@@ -1089,7 +1128,7 @@ end, {
   ["plugin-manager:view-source-hovered"] = function(view, plugin) view:open_file(plugin, "source") end,
   ["plugin-manager:view-readme-hovered"] = function(view, plugin) view:open_file(plugin, "readme") end,
 })
-command.add(row_action("uninstall", true), {
+command.add(row_action("reinstall", true), {
   ["plugin-manager:reinstall-hovered"] = function(view, plugin) view:reinstall(plugin) end
 })
 
@@ -1121,6 +1160,7 @@ end
 PluginView.menu:register(active_view, {
   { text = "Install", command = "plugin-manager:install-hovered" },
   { text = "Upgrade", command = "plugin-manager:upgrade-hovered" },
+  { text = "Replace", command = "plugin-manager:reinstall-hovered" },
   { text = "Uninstall", command = "plugin-manager:uninstall-hovered" },
   { text = "View Source", command = "plugin-manager:view-source-hovered" },
   { text = "View README", command = "plugin-manager:view-readme-hovered" },

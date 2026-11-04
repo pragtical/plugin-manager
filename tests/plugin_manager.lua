@@ -7,7 +7,7 @@ local json = require "core.json"
 local manager = require "plugins.plugin_manager"
 local test = require "core.test"
 
-local originals, threads, responses, errors, commands
+local originals, threads, responses, errors, commands, warnings
 
 local function mock_process(response)
   local stdout, stderr = response.stdout or "", response.stderr or ""
@@ -49,10 +49,12 @@ test.describe("plugin_manager processes", function()
       start = process.start,
       add_thread = core.add_thread,
       error = core.error,
+      warn = core.warn,
       restart = config.plugins.plugin_manager.restart_on_change,
       perform = command.perform, addons = manager.addons, valid_addons = manager.valid_addons
     }
     threads, responses, errors, commands = {}, {}, {}, {}
+    warnings = {}
     config.plugins.plugin_manager.restart_on_change = false
     process.start = function(argv)
       commands[#commands + 1] = argv
@@ -64,12 +66,14 @@ test.describe("plugin_manager processes", function()
     core.error = function(...)
       table.insert(errors, string.format(...))
     end
+    core.warn = function(...) warnings[#warnings + 1] = string.format(...) end
   end)
 
   test.after_each(function()
     process.start = originals.start
     core.add_thread = originals.add_thread
     core.error = originals.error
+    core.warn = originals.warn
     config.plugins.plugin_manager.restart_on_change = originals.restart
     command.perform = originals.perform
     manager.addons, manager.valid_addons = originals.addons, originals.valid_addons
@@ -191,6 +195,44 @@ test.describe("plugin_manager processes", function()
   local function listing_responses()
     return { { stdout = '{}' }, { stdout = '{"addons":[]}' }, { stdout = '{"repositories":[]}' } }
   end
+
+  test.test("explicit replacement never requests the old installed version", function()
+    responses = listing_responses()
+    local result = manager:reinstall({ id = "edited", version = "0.3", available_version = "0.4" })
+    run_threads()
+    test.equal(result.success, true)
+    test.equal(commands[1][3], "edited")
+    test.equal(commands[1][4], "--reinstall")
+  end)
+
+  test.test("reports protected copies skipped by Upgrade All", function()
+    responses = {
+      { stdout = '{}' },
+      { stdout = '{"warnings":["Skipping protected edited; explicitly reinstall to replace local or modified files"]}' },
+      { stdout = '{"addons":[]}' }, { stdout = '{"repositories":[]}' }
+    }
+    local result = manager:upgrade()
+    run_threads()
+    test.equal(result.success, true)
+    test.contains(warnings[1], "Skipping protected edited")
+  end)
+
+  test.test("keeps local and modified plugin manager installations protected", function()
+    for _, status in ipairs({ "local", "modified" }) do
+      responses = {
+        { stdout = json.encode({ addons = {
+          { id = "plugin_manager", status = status, type = "plugin", protected = true },
+          { id = "plugin_manager", status = "available", type = "plugin", version = "2.0", protected = true }
+        } }) },
+        { stdout = '{"repositories":[]}' }
+      }
+      local result = manager:refresh()
+      run_threads()
+      test.equal(result.success, true)
+      test.equal(#manager.valid_addons, 1)
+      test.equal(manager.valid_addons[1].status, "special")
+    end
+  end)
 
   test.test("batch install submits unique versioned IDs in one command", function()
     responses = listing_responses()
@@ -356,6 +398,7 @@ test.describe("plugin_manager widget view", function()
       addons = manager.addons, valid_addons = manager.valid_addons, refresh = manager.refresh,
       install_many = manager.install_many, upgrade_many = manager.upgrade_many,
       uninstall_many = manager.uninstall_many, check_for_updates = manager.check_for_updates,
+      reinstall = manager.reinstall,
       unstub = manager.unstub, open_doc = core.open_doc, root_open_doc = core.root_view.open_doc,
       show = core.nag_view.show, active_view = core.active_view,
       clip_rect_stack = core.clip_rect_stack,
@@ -379,7 +422,7 @@ test.describe("plugin_manager widget view", function()
       context.refresh_calls = context.refresh_calls + 1
       return manager.promise.new():resolve()
     end
-    for _, method in ipairs({ "install_many", "upgrade_many", "uninstall_many", "check_for_updates" }) do
+    for _, method in ipairs({ "install_many", "upgrade_many", "uninstall_many", "check_for_updates", "reinstall" }) do
       manager[method] = function(_, addons, options)
         context.operations[#context.operations + 1] = { method = method, addons = addons, options = options }
         context.operation = manager.promise.new()
@@ -398,6 +441,7 @@ test.describe("plugin_manager widget view", function()
     manager.addons, manager.valid_addons, manager.refresh = original.addons, original.valid_addons, original.refresh
     manager.install_many, manager.upgrade_many = original.install_many, original.upgrade_many
     manager.uninstall_many, manager.check_for_updates = original.uninstall_many, original.check_for_updates
+    manager.reinstall = original.reinstall
     manager.unstub, core.open_doc, core.root_view.open_doc = original.unstub, original.open_doc, original.root_open_doc
     core.nag_view.show, core.active_view = original.show, original.active_view
     core.clip_rect_stack = original.clip_rect_stack
@@ -412,6 +456,70 @@ test.describe("plugin_manager widget view", function()
     end
     test.fail("missing option " .. data)
   end
+
+  test.test("filters orphaned, modified, and unknown local installations", function(context)
+    for _, status in ipairs({ "modified", "local" }) do
+      context.addons[#context.addons + 1] = { id = status, type = "plugin", status = status,
+        protected = true, version_display = "unknown", tags = {}, path = USERDIR .. "/plugins/" .. status .. ".lua" }
+    end
+    local view = context.view
+    view:rebuild()
+    for _, status in ipairs({ "orphan", "modified", "local" }) do
+      choose(view.status_box, status)
+      test.equal(#view:get_sorted_plugins(), 1)
+      test.equal(view:get_sorted_plugins()[1].id, status)
+      local restored = manager.view.from_state(view:get_state())
+      test.equal(restored.status_filter, status)
+      test.equal(#restored:get_sorted_plugins(), 1)
+      restored:destroy_childs()
+    end
+  end)
+
+  test.test("protected candidates require confirmed replacement rather than Install or Upgrade", function(context)
+    local edited = { id = "edited", version = "0.3", available_version = "0.4", type = "plugin",
+      status = "modified", protected = true, tags = {}, path = USERDIR .. "/plugins/edited.lua" }
+    local candidate = { id = "edited", version = "0.4", type = "plugin", status = "available", protected = true, tags = {} }
+    context.addons[#context.addons + 1], context.addons[#context.addons + 2] = edited, candidate
+    local view = context.view
+    view:rebuild()
+    view:focus_plugin(edited)
+    test.equal(view.details_buttons.reinstall.visible, true)
+    test.equal(view.details_buttons.upgrade.visible, false)
+    view:apply_action("install", { candidate })
+    view:apply_action("upgrade", { edited })
+    test.equal(#context.operations, 0)
+    local canceled = view:reinstall(edited)
+    test.contains(context.confirmation.message, "0.4")
+    context.confirmation.callback({ text = "Cancel" })
+    test.equal(canceled.success, true)
+    test.equal(#context.operations, 0)
+    view:set_checked(edited, true)
+    local replacing = view:reinstall(edited)
+    context.confirmation.callback({ text = "Replace" })
+    test.equal(context.operations[1].method, "reinstall")
+    context.operation:resolve()
+    test.equal(replacing.success, true)
+    test.is_nil(view.checked.edited)
+  end)
+
+  test.test("dropdown headers are dim and cannot be clicked or selected", function(context)
+    for _, box in ipairs({ context.view.category_box, context.view.status_box, context.view.sort_box }) do
+      local selected = box:get_selected()
+      box.list.get_row_at_position = function() return 1 end
+      box.list:on_click("left", 0, 0)
+      box.list:on_mouse_pressed("right", 0, 0, 1)
+      test.equal(box:get_selected(), selected)
+      local color
+      box.list.draw_text_multiline = function(_, _, _, x, y, foreground)
+        color = foreground
+        return x, y, 10, 20
+      end
+      box.list:draw_row(1, 0, 0, true)
+      test.same(color, style.dim)
+      box.list:draw_row(2, 0, 0, true)
+      test.same(color, style.text)
+    end
+  end)
 
   for _, alignment in ipairs { "s", "e" } do
     for _, highlighted in ipairs { "hovered", "selected" } do
