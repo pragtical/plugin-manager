@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -144,7 +144,7 @@ jobs:
       #     dpkg-deb --build --root-owner-group $NAME
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           path: build-ci/install/bin/${{ env.BIN }}
           name: ${{ env.BIN }}
@@ -153,15 +153,15 @@ jobs:
     strategy:
       matrix:
         config:
-          - { arch: x86_64, runner: macos-15-intel } # macos-15-intel runs on Intel runners
-          - { arch: aarch64, runner: macos-14 } # macos-14 runs on M1 runners
+          - { arch: x86_64, runner: macos-15-intel }
+          - { arch: aarch64, runner: macos-15 }
 
     runs-on: ${{ matrix.config.runner }}
     env: { CC: clang }
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -195,7 +195,7 @@ jobs:
           meson install -C build-ci --no-rebuild
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           path: build-ci/install/bin/${{ env.BIN }}
           name: ${{ env.BIN }}
