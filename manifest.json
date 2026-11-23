@@ -2,11 +2,11 @@
   "addons": [
     {
       "id": "plugin_manager",
-      "version": "1.8.0",
-      "description": "A GUI interface to Adam's pragtical plugin manager.",
+      "version": "2.0.0",
+      "description": "A GUI interface to pragtical plugin manager.",
       "type": "plugin",
       "path": "plugins/plugin_manager",
-      "mod_version": "3.10.0",
+      "mod_version": "3.16.0",
       "files": [
         {
           "url": "https://github.com/pragtical/plugin-manager/releases/download/latest/ppm.x86_64-linux",

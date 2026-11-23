@@ -1,4 +1,4 @@
--- mod-version:3.10.0 --priority:5
+-- mod-version:3.16.0 --priority:5
 
 local core = require "core"
 local common = require "core.common"
@@ -76,13 +76,19 @@ local function decode_response(data)
 end
 
 local running_processes = {}
+local startup_handler = "plugins.plugin_manager.apply_updates"
+local transactions
+if PLATFORM == "Windows" then
+  local ok, module = pcall(require, "core.transactions")
+  if ok then transactions = module end
+end
 local default_arguments = {
   "--mod-version=" .. (rawget(_G, "MOD_VERSION_STRING") or MOD_VERSION),
   "--datadir=" .. DATADIR,
   "--binary=" .. EXEFILE,
   "--assume-yes"
 }
-if config.plugins.plugin_manager.ssl_certs then table.insert(default_arguments, "--ssl_certs") table.insert(cmd, config.plugins.plugin_manager.ssl_certs) end
+if config.plugins.plugin_manager.ssl_certs then table.insert(default_arguments, "--ssl-certs=" .. config.plugins.plugin_manager.ssl_certs) end
 if config.plugins.plugin_manager.force then table.insert(default_arguments, "--force") end
 
 local function extract_progress(chunk)
@@ -199,7 +205,11 @@ end
 
 function PluginManager:refresh(options)
   local prom = Promise.new()
+  if transactions then self.pending, self.pending_error = transactions.get(startup_handler) end
   local cmd = { "list" }
+  if self.pending and self.pending.state ~= "in_progress" then
+    table.insert(cmd, "--pending=" .. self.pending.payload.token)
+  end
   if not config.plugins.plugin_manager.show_libraries then
     table.insert(cmd, "--type")
     table.insert(cmd, "!library")
@@ -254,12 +264,98 @@ local function finish_plugin_changes(plugin_manager, options, promise, result)
   end
 end
 
+local function update_pending_rows(result)
+  local removed, replacements = {}, {}
+  for _, id in ipairs(result.removed or {}) do removed[id] = true end
+  for _, name in ipairs({ "addons", "valid_addons" }) do
+    local list = PluginManager[name]
+    if list then
+      list = common.merge({}, list)
+      for i, addon in ipairs(list) do
+        local action = addon.pending_action
+        if result.pending then
+          action = result.pending[addon.pending_key] or result.pending[addon.pending_source_key] or result.pending[addon.queue_key]
+            or (not result.pending["except:" .. addon.id] and result.pending[addon.queue_fallback] or nil)
+        elseif result.empty or removed[addon.id] then action = nil end
+        if action ~= addon.pending_action then
+          local copy = replacements[addon] or common.merge({}, addon)
+          copy.pending_action = action
+          replacements[addon], list[i] = copy, copy
+        end
+      end
+      PluginManager[name] = list
+    end
+  end
+end
+
+local function queue_changes(action, args, options)
+  local promise = Promise.new()
+  if not transactions then
+    return promise:reject("This Pragtical build cannot apply startup transactions. Close the editor and use ppm externally.")
+  end
+  if options.userdir and options.userdir ~= USERDIR then return promise:reject("Cannot queue changes for another profile") end
+  local pending, err = transactions.get(startup_handler)
+  if err or (pending and pending.state ~= "ready") then
+    return promise:reject(err or (pending.last_failure and pending.last_failure.message) or "Update in progress or interrupted")
+  end
+  if action == "undo" and not pending then return promise:reject("No plugin changes are queued") end
+  local path = config.plugins.plugin_manager.ppm_binary_path
+  local name = common.basename(path)
+  local bundled = path == DATADIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. name
+  if (name ~= "ppm." .. ARCH .. ".exe" and name ~= "ppm.exe") or (not bundled and
+    path ~= USERDIR .. PATHSEP .. "plugins" .. PATHSEP .. "plugin_manager" .. PATHSEP .. name) then
+    return promise:reject("Startup transactions require the packaged or user-installed ppm binary")
+  end
+  local payload = pending and pending.payload or { name = name, bundled = bundled, cachedir = options.cachedir,
+    ssl_certs = config.plugins.plugin_manager.ssl_certs, force = config.plugins.plugin_manager.force }
+  if payload.cachedir ~= options.cachedir or payload.name ~= name or payload.bundled ~= bundled then
+    return promise:reject("Pending changes use a different ppm configuration")
+  end
+  run({ "queue", payload.token or "new", action, table.unpack(args) }, options):done(function(output)
+    local result = decode_response(output)
+    if not result or type(result.token) ~= "string" then return promise:reject("Invalid staged batch response") end
+    if result.empty then
+      if pending then
+        local current, read_error = transactions.get(startup_handler)
+        if not current or current.payload.token ~= result.token then
+          return promise:reject(read_error or "The pending batch has changed")
+        end
+        local ok, remove_error = transactions.remove(startup_handler)
+        if not ok then return promise:reject(remove_error) end
+      end
+      run({ "discard-pending", result.token }, options)
+    elseif not pending then
+      payload.token = result.token
+      local ok, register_error = transactions.register(startup_handler, { title = "Apply plugin changes", payload = payload })
+      if not ok then
+        run({ "discard-pending", payload.token }, options)
+        return promise:reject(register_error)
+      end
+    end
+    PluginManager.pending, err = transactions.get(startup_handler)
+    if not result.empty and (not PluginManager.pending or PluginManager.pending.payload.token ~= result.token) then
+      return promise:reject(err or "The pending batch is no longer queued")
+    end
+    if result.empty then core.log("No plugin changes are queued.")
+    elseif action == "undo" then core.log("Removed %s from pending plugin changes.", args[1])
+    else core.log("Plugin changes queued. Quit and reopen Pragtical to apply them.") end
+    update_pending_rows(result)
+    promise:resolve("pending")
+  end):fail(function(message) promise:reject(message) end)
+  return promise
+end
+
+function PluginManager:undo_pending(addon, options)
+  return queue_changes("undo", { addon.id }, options or {})
+end
+
 function PluginManager:upgrade(options)
   options = options or {}
+  if PLATFORM == "Windows" then return queue_changes("upgrade", {}, options) end
   local prom = Promise.new()
-  if options.progress then options.progress({ label = "Checking for plugin updates...", percent = 0 }) end
+  if options.progress then options.progress({ label = "Checking for plugin updates..." }) end
   run({ "update" }, options):done(function()
-    if options.progress then options.progress({ label = "Upgrading installed plugins...", percent = 0 }) end
+    if options.progress then options.progress({ label = "Upgrading installed plugins..." }) end
     run({ "upgrade" }, options):done(function()
       finish_plugin_changes(self, options, prom)
     end):fail(function(arg) prom:reject(arg) end)
@@ -271,7 +367,7 @@ end
 function PluginManager:check_for_updates(options)
   options = options or {}
   local prom = Promise.new()
-  if options.progress then options.progress({ label = "Checking for plugin updates...", percent = 0 }) end
+  if options.progress then options.progress({ label = "Checking for plugin updates..." }) end
   run({ "repo", "update" }, options):done(function()
     self:refresh(options):forward(prom)
   end):fail(function(arg) prom:reject(arg) end)
@@ -287,7 +383,7 @@ end
 function PluginManager:add(url, options)
   options = options or {}
   local promise = Promise.new()
-  if options.progress then options.progress({ label = "Adding repository...", percent = 0 }) end
+  if options.progress then options.progress({ label = "Adding repository..." }) end
   run({ "repo", "add", url }, options):done(function()
     self:refresh(options):forward(promise)
   end):fail(function(arg) promise:reject(arg) end)
@@ -298,7 +394,7 @@ end
 function PluginManager:remove(url, options)
   options = options or {}
   local promise = Promise.new()
-  if options.progress then options.progress({ label = "Removing repository...", percent = 0 }) end
+  if options.progress then options.progress({ label = "Removing repository..." }) end
   run({ "repo", "rm", url }, options):done(function()
     self:refresh(options):forward(promise)
   end):fail(function(arg) promise:reject(arg) end)
@@ -320,13 +416,17 @@ end
 
 local function run_stateful_plugin_command(plugin_manager, cmd, args, options)
   options = options or {}
+  if PLATFORM == "Windows" then
+    if args[#args] == "--reinstall" then table.remove(args); cmd = "reinstall" end
+    return queue_changes(cmd, args, options)
+  end
   local promise = Promise.new()
   if options.progress then
     local labels = {
       install = args[#args] == "--reinstall" and "Reinstalling plugins..." or "Installing plugins...",
       uninstall = "Uninstalling plugins..."
     }
-    options.progress({ label = labels[cmd] or "Applying plugin changes...", percent = 0 })
+    options.progress({ label = labels[cmd] or "Applying plugin changes..." })
   end
   run({ cmd, table.unpack(args) }, options):done(function(result)
     finish_plugin_changes(plugin_manager, options, promise, result)
@@ -358,9 +458,10 @@ end
 
 function PluginManager:upgrade_many(addons, options)
   options = options or {}
-  local promise = Promise.new()
   local args = addon_arguments(addons, false)
-  if options.progress then options.progress({ label = "Checking for plugin updates...", percent = 0 }) end
+  if PLATFORM == "Windows" then return queue_changes("upgrade", args, options) end
+  local promise = Promise.new()
+  if options.progress then options.progress({ label = "Checking for plugin updates..." }) end
   run({ "update" }, options):done(function()
     -- Let ppm resolve the latest compatible candidates after updating metadata.
     run_stateful_plugin_command(self, "install", args, options):forward(promise)
@@ -384,7 +485,7 @@ function PluginManager:unstub(addon, options)
   if addon.path and system.get_file_info(addon.path) then
     promise:resolve(addon)
   else
-    if options.progress then options.progress({ label = "Fetching plugin source...", percent = 0 }) end
+    if options.progress then options.progress({ label = "Fetching plugin source..." }) end
     run({ "unstub", addon.id }, options):done(function(result)
       local decoded, err = decode_response(result)
       local unstubbed_addon = decoded and decoded.addons and decoded.addons[1]
@@ -593,9 +694,9 @@ command.add(nil, {
       submit = function(name)
         PluginManager:get_addon(name, { progress = PluginManager.view.progress_callback }):done(function(addon)
           core.log("Attempting to install plugin " .. name .. "...")
-          PluginManager:install(addon, { progress = PluginManager.view.progress_callback }):done(function()
-            core.log("Successfully installed plugin " .. addon.id .. ".")
-          end)
+          PluginManager:install(addon, { progress = PluginManager.view.progress_callback }):done(function(result)
+            if result ~= "pending" then core.log("Successfully installed plugin " .. addon.id .. ".") end
+          end):fail(function(err) core.error("%s", err) end)
         end):fail(function()
           core.error("Unknown plugin " .. name .. ".")
         end)
@@ -618,9 +719,9 @@ command.add(nil, {
       submit = function(name)
         PluginManager:get_addon(name, { progress = PluginManager.view.progress_callback }):done(function(addon)
           core.log("Attempting to uninstall plugin " .. addon.id .. "...")
-          PluginManager:uninstall(addon, { progress = PluginManager.view.progress_callback }):done(function()
-            core.log("Successfully uninstalled plugin " .. addon.id .. ".")
-          end)
+          PluginManager:uninstall(addon, { progress = PluginManager.view.progress_callback }):done(function(result)
+            if result ~= "pending" then core.log("Successfully uninstalled plugin " .. addon.id .. ".") end
+          end):fail(function(err) core.error("%s", err) end)
         end):fail(function()
           core.error("Unknown plugin " .. name .. ".")
         end)
@@ -671,12 +772,36 @@ command.add(nil, {
     local action = view and view:check_for_updates() or PluginManager:check_for_updates({})
     action:done(function() core.log("Successfully checked for plugin updates.") end)
   end,
-  ["plugin-manager:upgrade"] = function() PluginManager:upgrade({ progress = PluginManager.view.progress_callback }):done(function() core.log("Successfully upgraded installed plugins.") end) end,
+  ["plugin-manager:upgrade"] = function()
+    PluginManager:upgrade({ progress = PluginManager.view.progress_callback }):done(function(result)
+      if result ~= "pending" then core.log("Successfully upgraded installed plugins.") end
+    end):fail(function(err) core.error("%s", err) end)
+  end,
   ["plugin-manager:purge"] = function() PluginManager:purge({ progress = PluginManager.view.progress_callback }):done(function() core.log("Successfully purged ppm directory.") end) end,
   ["plugin-manager:show"] = function()
     local node = core.root_view:get_active_node_default()
     node:add_view(PluginManager.view(PluginManager))
   end,
+})
+
+command.add(function() return transactions and PluginManager.pending and PluginManager.pending.state == "ready" end, {
+  ["plugin-manager:quit-to-apply"] = function() command.perform("core:quit") end
+})
+
+command.add(function()
+  return transactions and PluginManager.pending and PluginManager.pending.state ~= "in_progress"
+end, {
+  ["plugin-manager:cancel-pending"] = function()
+    local pending, err = transactions.get(startup_handler)
+    if not pending then core.warn("%s", err or "No pending plugin changes"); return end
+    local ok, remove_error = transactions.remove(startup_handler)
+    if not ok then core.error("%s", remove_error); return end
+    PluginManager.pending = nil
+    update_pending_rows({ empty = true })
+    run({ "discard-pending", pending.payload.token }, { cachedir = pending.payload.cachedir }):done(function()
+      core.log("Cancelled pending plugin changes.")
+    end)
+  end
 })
 
 if core.menu_view then

@@ -212,6 +212,297 @@ test.describe("ppm integration", function()
     test.is_nil(system.get_file_info(context.userdir .. PATHSEP .. "plugins/bracketmatch.lua"))
   end)
 
+  test.test("stages dependencies and merges selections without installing until apply", function(context)
+    local token = ppm(context, { "stage", "new", "install", "lsp" }).token
+    ppm(context, { "stage", token, "install", "editorconfig" })
+    ppm(context, { "stage", token, "install", "unknown_fixture" }, { failure = true })
+    test.is_nil(receipt(context, "widget"))
+    test.is_nil(system.get_file_info(context.userdir .. "/plugins/lsp"))
+    ppm(context, { "apply-pending", token })
+    for _, id in ipairs { "widget", "lintplus", "lsp", "editorconfig" } do test.ok(receipt(context, id)) end
+
+    token = ppm(context, { "stage", "new", "uninstall", "lsp" }).token
+    write(context.userdir .. "/plugins/lsp/.local", "changed after staging")
+    test.contains(ppm(context, { "apply-pending", token }, { failure = true }).error, "changed since staging")
+    test.ok(receipt(context, "lintplus"))
+    assert(os.remove(context.userdir .. "/plugins/lsp/.local"))
+    ppm(context, { "apply-pending", token })
+    test.is_nil(receipt(context, "widget"))
+    test.is_nil(system.get_file_info(context.userdir .. "/plugins/lsp"))
+    test.ok(receipt(context, "editorconfig"))
+  end)
+
+  test.test("queues and withdraws selections offline without preparing any files", function(context)
+    assert(os.rename(context.repo, context.repo .. ".offline"))
+    local offline = "--ssl-certs=" .. context.root .. "/missing-certs"
+    local token = ppm(context, { "queue", "new", "install", "lsp:1.0", "editorconfig:1.0", offline }).token
+    local dir = context.userdir .. "/ppm-updates/" .. token
+    test.same(system.list_dir(dir), { "plan.json" })
+    local result = ppm(context, { "queue", token, "undo", "lsp", offline })
+    test.equal(result.pending["install:editorconfig:1.0"], "install")
+    test.is_nil(result.pending["install:lsp:1.0"])
+    test.same(system.list_dir(dir), { "plan.json" })
+    assert(os.rename(context.repo .. ".offline", context.repo))
+    test.equal(ppm(context, { "list", "editorconfig", "--pending=" .. token }).addons[1].pending_action, "install")
+    ppm(context, { "apply-pending", token })
+    test.ok(receipt(context, "editorconfig"))
+    for _, id in ipairs { "lsp", "widget", "lintplus" } do test.is_nil(receipt(context, id)) end
+  end)
+
+  test.test("failed preparation keeps the live profile intact and the queue editable", function(context)
+    for _, entry in ipairs(context.manifest.addons) do
+      if entry.id == "lsp" then
+        entry.files = { { url = "https://example.invalid/server.zip", checksum = string.rep("0", 64) } }
+      end
+    end
+    write(context.repo .. "/manifest.json", json.encode(context.manifest))
+    local token = ppm(context, { "queue", "new", "install", "bracketmatch", "lsp" }).token
+    local file = context.userdir .. "/ppm-updates/" .. token .. "/plan.json"
+    local original = read(file)
+    test.equal(ppm(context, { "apply-pending", token, "--no-network" }, { failure = true }).code, "prepare_failed")
+    test.equal(read(file), original)
+    test.is_nil(system.get_file_info(context.userdir .. "/plugins/bracketmatch.lua"))
+    test.is_nil(receipt(context, "widget"))
+    ppm(context, { "queue", token, "undo", "lsp" })
+    ppm(context, { "apply-pending", token })
+    test.ok(receipt(context, "bracketmatch"))
+  end)
+
+  test.test("retry applies the complete prepared selection without the catalog", function(context)
+    ppm(context, { "install", "editorconfig", "bracketmatch" })
+    set_addon_version(context, "bracketmatch", "2.0")
+    set_addon_version(context, "editorconfig", "2.0")
+    local token = ppm(context, { "queue", "new", "upgrade" }).token
+    ppm(context, { "queue", token, "undo", "bracketmatch" })
+    local dir = context.userdir .. "/ppm-updates/" .. token
+    write(dir .. "/old/plugins", "block the backup move")
+    ppm(context, { "apply-pending", token }, { failure = true })
+    test.equal(json.decode(read(dir .. "/plan.json")).prepared, true)
+    local published = read(dir .. "/plan.json")
+    ppm(context, { "queue", token, "undo", "bracketmatch" })
+    test.equal(read(dir .. "/plan.json"), published)
+    test.equal(receipt(context, "editorconfig").version, "1.0")
+    assert(os.remove(dir .. "/old/plugins"))
+    assert(os.rename(context.repo, context.repo .. ".offline"))
+    ppm(context, { "apply-pending", token, "--ssl-certs=" .. context.root .. "/missing-certs" })
+    test.equal(receipt(context, "bracketmatch").version, "1.0")
+    test.equal(receipt(context, "editorconfig").version, "2.0")
+  end)
+
+  test.test("an uninstall-only selection applies without setting up TLS", function(context)
+    ppm(context, { "install", "lsp" })
+    local token = ppm(context, { "queue", "new", "uninstall", "lsp" }).token
+    ppm(context, { "apply-pending", token, "--ssl-certs=" .. context.root .. "/missing-certs" })
+    for _, id in ipairs { "lsp", "widget", "lintplus" } do test.is_nil(receipt(context, id)) end
+  end)
+
+  test.test("a conflicting install and uninstall cannot partially apply", function(context)
+    ppm(context, { "install", "widget" })
+    local token = ppm(context, { "queue", "new", "uninstall", "widget" }).token
+    ppm(context, { "queue", token, "install", "lsp" })
+    local failure = ppm(context, { "apply-pending", token }, { failure = true })
+    test.equal(failure.code, "prepare_failed")
+    test.contains(failure.error, "another queued plugin requires it")
+    test.ok(receipt(context, "widget"))
+    test.is_nil(receipt(context, "lsp"))
+    ppm(context, { "queue", token, "undo", "widget" })
+    ppm(context, { "apply-pending", token })
+    test.ok(receipt(context, "widget"))
+    test.ok(receipt(context, "lsp"))
+  end)
+
+  test.test("appending preserves prepared payloads and does not replay downloads", function(context)
+    for _, entry in ipairs(context.manifest.addons) do
+      if entry.id == "gitblame" then entry.dependencies = { widget = {} } end
+    end
+    write(context.repo .. "/manifest.json", json.encode(context.manifest))
+    local token = ppm(context, { "stage", "new", "install", "lsp:1.0" }).token
+    local file = context.userdir .. "/ppm-updates/" .. token .. "/plan.json"
+    local first = json.decode(read(file))
+    -- The originally selected version is no longer in the catalog.
+    set_addon_version(context, "lsp", "2.0", "-- replacement")
+    local result = ppm(context, { "stage", token, "install", "gitblame" })
+    local second = json.decode(read(file))
+    for rel, target in pairs(first.targets) do test.same(second.targets[rel], target) end
+    for _, row in ipairs(ppm(context, { "list", "--pending=" .. token }).addons) do
+      test.equal(row.pending_action, result.pending[row.pending_key] or result.pending[row.pending_source_key])
+    end
+    local published = read(file)
+    -- Fail after writing a replacement for an already-published target.
+    for _, entry in ipairs(context.manifest.addons) do
+      if entry.id == "minimap" then entry.dependencies = { missing_fixture = {} } end
+    end
+    write(context.repo .. "/manifest.json", json.encode(context.manifest))
+    local failure = ppm(context, { "stage", token, "install", "lsp:2.0", "minimap" }, { failure = true })
+    test.contains(failure.error, "missing_fixture")
+    test.equal(read(file), published)
+    ppm(context, { "apply-pending", token })
+    test.equal(receipt(context, "lsp").version, "1.0")
+    test.ok(receipt(context, "widget"))
+    test.ok(receipt(context, "gitblame"))
+  end)
+
+  test.test("an earlier single-slot batch can append and apply a replacement", function(context)
+    local token = ppm(context, { "stage", "new", "install", "bracketmatch", "minimap" }).token
+    local file = context.userdir .. "/ppm-updates/" .. token .. "/plan.json"
+    local old = json.decode(read(file))
+    old.schema, old.slot = 1, "a"
+    for _, target in pairs(old.targets) do target.slot = nil end
+    write(file, json.encode(old))
+    set_addon_version(context, "minimap", "2.0", "-- replacement")
+    ppm(context, { "stage", token, "install", "minimap:2.0" })
+    local plan = json.decode(read(file))
+    test.equal(plan.targets["plugins/bracketmatch.lua"].slot, "a")
+    test.equal(plan.targets["plugins/minimap.lua"].slot, "b")
+    ppm(context, { "apply-pending", token })
+    test.equal(receipt(context, "bracketmatch").version, "1.0")
+    test.equal(receipt(context, "minimap").version, "2.0")
+  end)
+
+  test.test("apply still rejects a damaged reused payload before touching live files", function(context)
+    local token = ppm(context, { "stage", "new", "install", "editorconfig" }).token
+    local dir = context.userdir .. "/ppm-updates/" .. token
+    local plan = json.decode(read(dir .. "/plan.json"))
+    write(dir .. "/" .. plan.targets["plugins/editorconfig"].slot .. "/plugins/editorconfig/init.lua", "damaged")
+    ppm(context, { "stage", token, "install", "bracketmatch" })
+    local failure = ppm(context, { "apply-pending", token }, { failure = true })
+    test.contains(failure.error, "damaged staged addon")
+    test.is_nil(system.get_file_info(context.userdir .. "/plugins/bracketmatch.lua"))
+    test.is_nil(receipt(context, "editorconfig"))
+  end)
+
+  test.test("stages a repository-root addon with a deep source path", function(context)
+    local repo = context.root .. PATHSEP .. "standalone"
+    local dir = "subprojects" .. PATHSEP .. "packagefiles"
+    local leaf = string.rep("x", math.max(1, 247 - #repo - #dir - 6)) .. ".lib"
+    local rel = dir .. PATHSEP .. leaf
+    write(repo .. PATHSEP .. rel, "nested asset")
+    write(repo .. "/manifest.json", json.encode({ addons = {
+      { id = "root_fixture", path = ".", version = "1.0" }
+    } }))
+    ppm(context, { "repo", "add", repo })
+    if PLATFORM == "Windows" then
+      ppm(context, { "exec", "assert(assert(system.stat(arg[1])).abs_path == assert(system.stat(arg[2])).abs_path)",
+        repo .. PATHSEP .. rel, repo .. PATHSEP .. PATHSEP .. rel })
+    end
+    local token = ppm(context, { "stage", "new", "install", "root_fixture" }).token
+    ppm(context, { "apply-pending", token })
+    test.equal(read(context.userdir .. "/plugins/root_fixture/" .. rel), "nested asset")
+  end)
+
+  test.test("lists and undoes individual staged changes without touching installed files", function(context)
+    ppm(context, { "install", "minimap", "bracketmatch", "editorconfig" })
+    for _, id in ipairs({ "minimap", "bracketmatch" }) do set_addon_version(context, id, "2.0", "-- new") end
+    local token = ppm(context, { "stage", "new", "upgrade" }).token
+    local function queued()
+      local actions = {}
+      for _, row in ipairs(ppm(context, { "list", "--pending=" .. token }).addons) do
+        if row.pending_action then actions[row.id] = row.pending_action end
+      end
+      return actions
+    end
+    ppm(context, { "stage", token, "uninstall", "editorconfig" })
+    ppm(context, { "stage", token, "install", "lsp", "gitblame" })
+    local expected = { minimap = "upgrade", bracketmatch = "upgrade", editorconfig = "uninstall",
+      lsp = "install", lintplus = "install", widget = "install", gitblame = "install" }
+    test.same(queued(), expected)
+    test.contains(ppm(context, { "stage", token, "undo", "widget" }, { failure = true }).error, "requires it")
+    test.same(queued(), expected)
+    for _, id in ipairs({ "bracketmatch", "editorconfig", "lsp" }) do ppm(context, { "stage", token, "undo", id }) end
+    test.same(queued(), { minimap = "upgrade", gitblame = "install" })
+    test.equal(receipt(context, "minimap").version, "1.0")
+    test.is_nil(receipt(context, "gitblame"))
+    ppm(context, { "apply-pending", token })
+    test.equal(receipt(context, "bracketmatch").version, "1.0")
+    test.equal(receipt(context, "minimap").version, "2.0")
+    test.ok(receipt(context, "editorconfig"))
+    test.ok(receipt(context, "gitblame"))
+    test.same(queued(), {})
+    token = ppm(context, { "stage", "new", "uninstall", "gitblame" }).token
+    test.ok(ppm(context, { "stage", token, "undo", "gitblame" }).empty)
+    test.same(queued(), {})
+    test.contains(ppm(context, { "stage", token, "install", "lsp" }, { failure = true }).error, "batch is empty")
+  end)
+
+  test.test("undo edits the saved batch offline and preserves a shared dependency", function(context)
+    for _, entry in ipairs(context.manifest.addons) do
+      if entry.id == "gitblame" then entry.dependencies = { widget = {} } end
+    end
+    write(context.repo .. "/manifest.json", json.encode(context.manifest))
+    local token = ppm(context, { "stage", "new", "install", "lsp", "gitblame" }).token
+    local path = context.userdir .. "/ppm-updates/" .. token .. "/plan.json"
+    local original = read(path)
+    local plan = json.decode(original)
+    assert(os.rename(context.repo, context.repo .. ".offline"))
+    local args = { "stage", token, "undo", "widget", "--ssl-certs=" .. context.root .. "/missing-cert" }
+    test.contains(ppm(context, args, { failure = true }).error, "requires it")
+    test.equal(read(path), original)
+    args[4] = "lsp"
+    test.same(ppm(context, args).removed, { "lintplus", "lsp" })
+    local edited = json.decode(read(path))
+    test.same(edited.targets["libraries/widget"], plan.targets["libraries/widget"])
+    test.same(edited.targets["plugins/gitblame.lua"], plan.targets["plugins/gitblame.lua"])
+    ppm(context, { "apply-pending", token })
+    test.ok(receipt(context, "widget"))
+    test.ok(receipt(context, "gitblame"))
+    test.is_nil(receipt(context, "lsp"))
+    test.is_nil(receipt(context, "lintplus"))
+    -- Undoing one uninstall must likewise preserve the shared library for the restored consumer.
+    assert(os.rename(context.repo .. ".offline", context.repo))
+    ppm(context, { "install", "lsp" })
+    token = ppm(context, { "stage", "new", "uninstall", "lsp", "gitblame" }).token
+    test.same(ppm(context, { "stage", token, "undo", "lsp" }).removed, { "lintplus", "lsp", "widget" })
+    ppm(context, { "apply-pending", token })
+    test.ok(receipt(context, "widget"))
+    test.ok(receipt(context, "lsp"))
+    test.is_nil(receipt(context, "gitblame"))
+    local settings = json.decode(read(context.root .. "/config/settings.json"))
+    test.contains(settings.installed, "lsp")
+  end)
+
+  test.test("offline undo keeps an upgrade required by the remaining plugin version", function(context)
+    ppm(context, { "install", "encoding" })
+    for _, entry in ipairs(context.manifest.addons) do
+      if entry.id == "encodings" then entry.dependencies.encoding.version = ">=2.0" end
+    end
+    set_addon_version(context, "encoding", "2.0", "-- new")
+    local token = ppm(context, { "stage", "new", "upgrade" }).token
+    ppm(context, { "stage", token, "install", "encodings" })
+    assert(os.rename(context.repo, context.repo .. ".offline"))
+    test.contains(ppm(context, { "stage", token, "undo", "encoding" }, { failure = true }).error, "requires it")
+    test.same(ppm(context, { "stage", token, "undo", "encodings" }).removed, { "encodings" })
+    ppm(context, { "apply-pending", token })
+    test.equal(receipt(context, "encoding").version, "2.0")
+    test.is_nil(receipt(context, "encodings"))
+  end)
+
+  test.test("stages, replaces and removes an addon beyond MAX_PATH", function(context)
+    while #context.userdir < 190 do context.userdir = context.userdir .. PATHSEP .. "portable-profile" end
+    local rel = "plugins/editorconfig/runtime/" .. string.rep("x", 55) .. ".lib"
+    test.ok(#context.userdir + #rel > 260)
+    write(context.repo .. "/" .. rel, "old")
+    local entry
+    for _, addon in ipairs(context.manifest.addons) do
+      if addon.id == "editorconfig" then entry = addon; break end
+    end
+    entry.path = "plugins/editorconfig"
+    write(context.repo .. "/manifest.json", json.encode(context.manifest))
+    ppm(context, { "install", "editorconfig" })
+    entry.version = "2.0"
+    write(context.repo .. "/manifest.json", json.encode(context.manifest))
+    write(context.repo .. "/" .. rel, "new")
+    local token = ppm(context, { "stage", "new", "install", "editorconfig" }).token
+    local before = receipt(context, "editorconfig")
+    ppm(context, { "apply-pending", token })
+    local after = receipt(context, "editorconfig")
+    test.equal(after.version, "2.0")
+    local file = rel:sub(#"plugins/editorconfig/" + 1)
+    test.ok(after.files[file] and before.files[file] ~= after.files[file])
+    token = ppm(context, { "stage", "new", "uninstall", "editorconfig" }).token
+    ppm(context, { "apply-pending", token })
+    test.is_nil(receipt(context, "editorconfig"))
+  end)
+
   test.test("batch uninstall skips targets already removed by dependency cleanup", function(context)
     ppm(context, { "install", "lsp" })
     local result = ppm(context, { "uninstall", "lsp", "lintplus", "widget", "lsp" })
@@ -220,6 +511,88 @@ test.describe("ppm integration", function()
       test.is_nil(system.get_file_info(context.userdir .. PATHSEP .. path))
     end
     test.equal(addon(context, "lsp").status, "available")
+  end)
+
+  test.test("reports a Windows file lock and preserves the batch for retry", function(context)
+    test.skip_if(PLATFORM ~= "Windows", "requires Windows delete sharing")
+    ppm(context, { "install", "bracketmatch" })
+    local token = ppm(context, { "stage", "new", "uninstall", "bracketmatch" }).token
+    local path = context.userdir .. "/plugins/bracketmatch.lua"
+    local handle = assert(io.open(path, "rb"))
+    local err = ppm(context, { "apply-pending", token }, { failure = true })
+    handle:close()
+    test.equal(err.code, "file_in_use")
+    test.contains(err.error, "bracketmatch.lua")
+    exists(path)
+    test.ok(receipt(context, "bracketmatch"))
+    ppm(context, { "apply-pending", token })
+    test.is_nil(system.get_file_info(path))
+    test.is_nil(receipt(context, "bracketmatch"))
+  end)
+
+  test.test("restores earlier addon moves if a later move fails", function(context)
+    ppm(context, { "install", "lsp" })
+    local token = ppm(context, { "stage", "new", "uninstall", "lsp" }).token
+    -- The library sorts before plugins. Prevent only the later backup move.
+    local blocked = context.userdir .. "/ppm-updates/" .. token .. "/old/plugins"
+    write(blocked, "not a directory")
+    ppm(context, { "apply-pending", token }, { failure = true })
+    exists(context.userdir .. "/libraries/widget/init.lua")
+    exists(context.userdir .. "/plugins/lsp/init.lua")
+    test.ok(receipt(context, "widget"))
+    assert(os.remove(blocked))
+    ppm(context, { "discard-pending", token })
+    exists(context.userdir .. "/plugins/lintplus/init.lua")
+  end)
+
+  test.test("streams byte counts with or without a download size", function(context)
+    local fixture = context.root .. "/progress.lua"
+    write(fixture, [[
+      local now = 0
+      system.time = function() now = now + 1; return now end
+      write_progress_bar(1024, 3072)
+      write_progress_bar(2048, 3072)
+      write_progress_bar(true)
+      write_progress_bar(1024)
+      write_progress_bar(2048)
+      write_progress_bar(true)
+      write_progress_bar(2048, 4, 0, 1)
+    ]])
+    local code, stdout, stderr = execute(context, { context.binary, "exec", fixture,
+      "--json", "--progress", "--quiet", "--no-network", "--cachedir=" .. context.root .. "/cache" })
+    test.equal(code, 0, stderr)
+    local events = {}
+    for line in stdout:gmatch("[^\r\n]+") do events[#events + 1] = json.decode(line).progress end
+    test.equal(#events, 7)
+    test.same(events[1], { percent = 0.333, detail = "1.0 KiB / 3.0 KiB" })
+    test.equal(events[2].percent, 0.666)
+    test.equal(events[3].percent, 1)
+    test.same(events[4], { detail = "1.0 KiB" })
+    test.same(events[5], { detail = "2.0 KiB" })
+    test.equal(events[6].percent, 1)
+    test.same(events[7], { percent = 0.25, detail = "2.0 KiB" })
+  end)
+
+  test.test("cold startup invokes the packaged handler and acknowledges ppm apply", function(context)
+    local module = DATADIR .. "/core/transactions.lua"
+    test.skip_if(not system.get_file_info(module), "editor does not support startup transactions")
+    local dir = context.userdir .. "/plugins/plugin_manager"
+    write(dir .. "/apply_updates.lua", read(context.cwd .. "/plugins/plugin_manager/apply_updates.lua"))
+    if PLATFORM == "Windows" then write(dir .. "/ppm.exe", read(context.binary))
+    else test.equal(execute(context, { "ln", "-s", context.binary, dir .. "/ppm.exe" }), 0) end
+    local token = ppm(context, { "queue", "new", "install", "lsp" }).token
+    local tx = assert(loadfile(module, "t", setmetatable({ USERDIR = context.userdir }, { __index = _G })))()
+    local handler = "plugins.plugin_manager.apply_updates"
+    test.ok(tx.register(handler, { title = "Apply plugin changes", payload = { name = "ppm.exe", token = token } }))
+    local code, stdout, stderr = execute(context, { EXEFILE, "--version" }, {
+      PRAGTICAL_USERDIR = context.userdir, PPM_CONFIG = context.root .. "/config",
+      PPM_CACHE = context.root .. "/cache", SDL_VIDEO_DRIVER = "dummy", PRAGTICAL_RENDERER = "surface"
+    })
+    test.equal(code, 0, stderr .. stdout)
+    test.contains(stdout, "Applying plugins/lsp")
+    test.is_nil(tx.get(handler))
+    exists(context.userdir .. "/plugins/lsp/init.lua")
+    test.ok(receipt(context, "lsp"))
   end)
 
   test.test("batch uninstall handles dependency targets before their dependents", function(context)
@@ -248,6 +621,43 @@ test.describe("ppm integration", function()
     test.is_nil(system.get_file_info(context.userdir .. PATHSEP .. "plugins/lintplus"))
     test.equal(read(bundled), contents)
     addon(context, "widget", "bundled")
+  end)
+
+  test.test("bundled Lua ignores checkout line endings but not source changes", function(context)
+    table.insert(context.manifest.addons, {
+      id = "monokai", type = "color", path = "colors/monokai.lua", version = "0.3"
+    })
+    write(context.repo .. "/manifest.json", json.encode(context.manifest))
+    for _, fixture in ipairs {
+      { "monokai", "colors/monokai.lua", "\n", "\r\n" },
+      { "language_ts", "plugins/language_ts.lua", "\r\n", "\n" },
+    } do
+      local id, path, repo_eol, bundled_eol = table.unpack(fixture)
+      local source = "-- mod-version: " .. MOD_VERSION_STRING .. "\nreturn {}\n"
+      write(context.repo .. "/" .. path, (source:gsub("\n", repo_eol)))
+      local bundled = context.datadir .. "/" .. path
+      write(bundled, (source:gsub("\n", bundled_eol)))
+      local rows = ppm(context, { "list", id }).addons
+      test.equal(#rows, 1, id)
+      test.equal(rows[1].status, "bundled")
+      write(bundled, read(bundled) .. "-- different source")
+      addon(context, id, "available")
+    end
+  end)
+
+  test.test("bundled directories still compare non-Lua assets byte for byte", function(context)
+    local path = "plugins/language_pack"
+    table.insert(context.manifest.addons, { id = "language_pack", path = path })
+    write(context.repo .. "/manifest.json", json.encode(context.manifest))
+    for _, root in ipairs { context.repo, context.datadir } do
+      write(root .. "/" .. path .. "/init.lua", "return {}" .. (root == context.repo and "\n" or "\r\n"))
+      write(root .. "/" .. path .. "/parser.bin", "\0A\nB")
+    end
+    local rows = ppm(context, { "list", "language_pack" }).addons
+    test.equal(#rows, 1)
+    test.equal(rows[1].status, "bundled")
+    write(context.datadir .. "/" .. path .. "/parser.bin", "\0A\r\nB")
+    addon(context, "language_pack", "available")
   end)
 
   test.test("reinstalls a modified singleton", function(context)
@@ -667,7 +1077,8 @@ test.describe("ppm integration", function()
       test.type(entry.version, "string")
       exists(root .. PATHSEP .. entry.path)
       if entry.id == "plugin_manager" then
-        test.equal(entry.mod_version, "3.10.0")
+        local plugin = core.get_plugin_details(root .. PATHSEP .. entry.path)
+        test.equal(entry.mod_version, plugin.version_string)
         test.is_nil(entry.dependencies and entry.dependencies.json)
       end
     end

@@ -5,6 +5,9 @@
   // prevent windows.h from including winsock.h, which will allow us to include winsock2.h
   #define WIN32_LEAN_AND_MEAN
   #include <windows.h>
+  #define PATHCCH_NO_DEPRECATE
+  #include <pathcch.h>
+  #include <wctype.h>
   #include <direct.h>
   #include <wincrypt.h>
   #include <process.h>
@@ -175,8 +178,6 @@ static void* join_thread(ppm_thread_t* thread) {
 
 #if _WIN32
 static LPCWSTR lua_toutf16(lua_State* L, const char* str) {
-  if (str && str[0] == 0)
-    return L"";
   int len = MultiByteToWideChar(CP_UTF8, 0, str, -1, NULL, 0);
   if (len > 0) {
     LPWSTR output = (LPWSTR) malloc(sizeof(WCHAR) * len);
@@ -212,6 +213,59 @@ static const char* lua_toutf8(lua_State* L, LPCWSTR str) {
   return NULL;
 }
 
+/* Keep one Lua-owned wide path on the stack. Resolve separators and dot
+ * components before entering the extended namespace (which does neither). */
+static LPCWSTR winpath(lua_State* L, const char* path) {
+  int top = lua_gettop(L);
+  size_t len = strlen(path), used = 0;
+  luaL_Buffer buf;
+  char *normalized = luaL_buffinitsize(L, &buf, len);
+  for (size_t i = 0; i < len; ++i) {
+    char c = path[i] == '/' ? '\\' : path[i];
+    /* Preserve the leading pair for UNC and device paths. */
+    if (c == '\\' && used && normalized[used - 1] == '\\' && i != 1) continue;
+    normalized[used++] = c;
+  }
+  luaL_pushresultsize(&buf, used);
+  LPCWSTR part = lua_toutf16(L, lua_tostring(L, -1));
+  if (*part && wcsncmp(part, L"\\\\.\\", 4) != 0) {
+    wchar_t *base = NULL, *full = NULL;
+    if (part[0] != L'\\' || part[1] != L'\\') {
+      if (part[1] == L':' && part[2] != L'\\') {
+        base = _wgetdcwd(towupper(part[0]) - L'A' + 1, NULL, 0);
+        part += 2;
+      } else if (part[1] != L':') base = _wgetcwd(NULL, 0);
+    }
+    HRESULT result = PathAllocCombine(base, part, PATHCCH_ALLOW_LONG_PATHS, &full);
+    free(base);
+    if (FAILED(result)) luaL_error(L, "cannot resolve Windows path %s (HRESULT %d)", path, (int)result);
+    if (wcslen(full) >= MAX_PATH - 12 && wcsncmp(full, L"\\\\?\\", 4) != 0) {
+      int unc = wcsncmp(full, L"\\\\", 2) == 0;
+      LPCWSTR prefix = unc ? L"\\\\?\\UNC\\" : L"\\\\?\\";
+      wchar_t *out = lua_newuserdata(L, (wcslen(prefix) + wcslen(full) + 1) * sizeof(wchar_t));
+      wcscpy(out, prefix);
+      wcscat(out, full + (unc ? 2 : 0));
+      part = out;
+    } else {
+      part = (LPCWSTR)lua_pushlstring(L, (const char*)full, (wcslen(full) + 1) * sizeof(wchar_t));
+    }
+    LocalFree(full);
+  }
+  lua_replace(L, top + 1);
+  lua_settop(L, top + 1);
+  return part;
+}
+
+/* Do not expose the private Win32 namespace in ledgers or repository URLs. */
+static const char* display_path(lua_State* L, LPCWSTR path) {
+  if (wcsncmp(path, L"\\\\?\\UNC\\", 8) == 0) {
+    lua_pushfstring(L, "\\\\%s", lua_toutf8(L, path + 8));
+    lua_remove(L, -2);
+    return lua_tostring(L, -1);
+  }
+  return lua_toutf8(L, wcsncmp(path, L"\\\\?\\", 4) == 0 && path[5] == L':' ? path + 4 : path);
+}
+
 static const void luaL_win32_push_error(lua_State* L, DWORD error_id) {
   wchar_t message_buffer[2048];
   size_t size = FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
@@ -233,13 +287,42 @@ static const int luaL_win32_error(lua_State* L, DWORD error_id, const char* mess
 
 static FILE* lua_fopen(lua_State* L, const char* path, const char* mode) {
   #ifdef _WIN32
-    FILE* file = _wfopen(lua_toutf16(L, path), lua_toutf16(L, mode));
+    FILE* file = _wfopen(winpath(L, path), lua_toutf16(L, mode));
     lua_pop(L, 2);
     return file;
   #else
     return fopen(path, mode);
   #endif
 }
+
+#ifdef _WIN32
+static int ppm_file_close(lua_State* L) {
+  luaL_Stream *stream = luaL_checkudata(L, 1, LUA_FILEHANDLE);
+  return luaL_fileresult(L, fclose(stream->f) == 0, NULL);
+}
+
+static int ppm_file_open(lua_State* L) {
+  const char *path = luaL_checkstring(L, 1), *mode = luaL_checkstring(L, 2);
+  luaL_Stream *stream = lua_newuserdata(L, sizeof(*stream));
+  stream->closef = NULL;
+  luaL_setmetatable(L, LUA_FILEHANDLE);
+  stream->f = lua_fopen(L, path, mode);
+  if (!stream->f) return luaL_fileresult(L, 0, path);
+  stream->closef = ppm_file_close;
+  return 1;
+}
+
+static int ppm_file_remove(lua_State* L) {
+  const char *path = luaL_checkstring(L, 1);
+  return luaL_fileresult(L, _wremove(winpath(L, path)) == 0, path);
+}
+
+static int ppm_file_rename(lua_State* L) {
+  LPCWSTR from = winpath(L, luaL_checkstring(L, 1));
+  LPCWSTR to = winpath(L, luaL_checkstring(L, 2));
+  return luaL_fileresult(L, _wrename(from, to) == 0, NULL);
+}
+#endif
 
 /** Hashing stuff; would have taken from mbedtls, but cannot guarantee it'll be there. **/
 static char hex_digits[] = "0123456789abcdef";
@@ -447,8 +530,8 @@ static int ppm_symlink(lua_State* L) {
     if (symlink(luaL_checkstring(L, 1), luaL_checkstring(L, 2)))
       return luaL_error(L, "can't create symlink %s: %s", luaL_checkstring(L, 2), strerror(errno));
   #else
-    DWORD flags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE | ((GetFileAttributesW(lua_toutf16(L, luaL_checkstring(L, 1))) & FILE_ATTRIBUTE_DIRECTORY) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0);
-    if (!CreateSymbolicLinkW(lua_toutf16(L, luaL_checkstring(L, 2)), lua_toutf16(L, luaL_checkstring(L, 1)), flags)) {
+    DWORD flags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE | ((GetFileAttributesW(winpath(L, luaL_checkstring(L, 1))) & FILE_ATTRIBUTE_DIRECTORY) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0);
+    if (!CreateSymbolicLinkW(winpath(L, luaL_checkstring(L, 2)), lua_toutf16(L, luaL_checkstring(L, 1)), flags)) {
       DWORD err = GetLastError();
       return luaL_win32_error(L, err, "can't create symbolic link %s%s", luaL_checkstring(L, 2), err == ERROR_PRIVILEGE_NOT_HELD ? " (did you enable Windows Developer Mode?)" : "");
     }
@@ -456,16 +539,23 @@ static int ppm_symlink(lua_State* L) {
   return 0;
 }
 
-static int ppm_chmod(lua_State* L) {
-  #ifdef _WIN32
-    if (_wchmod(lua_toutf16(L, luaL_checkstring(L, 1)), luaL_checkinteger(L, 2)))
-  #else
-    if (chmod(luaL_checkstring(L, 1), luaL_checkinteger(L, 2)))
-  #endif
-      return luaL_error(L, "can't chmod %s: %s", luaL_checkstring(L, 1), strerror(errno));
-  return 0;
+static int file_chmod(lua_State* L, const char* path, int mode) {
+#ifdef _WIN32
+  int result = _wchmod(winpath(L, path), mode);
+  lua_pop(L, 1);
+  return result;
+#else
+  return chmod(path, mode);
+#endif
 }
 
+static int ppm_chmod(lua_State* L) {
+  const char* path = luaL_checkstring(L, 1);
+  int mode = luaL_checkinteger(L, 2);
+  if (file_chmod(L, path, mode))
+      return luaL_error(L, "can't chmod %s: %s", path, strerror(errno));
+  return 0;
+}
 static int ppm_ls(lua_State *L) {
   const char *path = luaL_checkstring(L, 1);
   int i = 1;
@@ -476,7 +566,7 @@ static int ppm_ls(lua_State *L) {
   path = lua_tostring(L, -1);
 
   WIN32_FIND_DATAW fd;
-  HANDLE find_handle = FindFirstFileExW(lua_toutf16(L, path), FindExInfoBasic, &fd, FindExSearchNameMatch, NULL, 0);
+  HANDLE find_handle = FindFirstFileExW(winpath(L, path), FindExInfoBasic, &fd, FindExSearchNameMatch, NULL, 0);
   if (find_handle == INVALID_HANDLE_VALUE)
     return luaL_win32_error(L, GetLastError(), "can't ls %s", path);
   lua_newtable(L);
@@ -512,7 +602,7 @@ static int ppm_ls(lua_State *L) {
 static int ppm_rmdir(lua_State *L) {
   const char *path = luaL_checkstring(L, 1);
 #ifdef _WIN32
-  if (!RemoveDirectoryW(lua_toutf16(L, path)))
+  if (!RemoveDirectoryW(winpath(L, path)))
     return luaL_win32_error(L, GetLastError(), "can't rmdir %s", path);
 #else
   if (remove(path))
@@ -524,7 +614,7 @@ static int ppm_rmdir(lua_State *L) {
 static int ppm_mkdir(lua_State *L) {
   const char *path = luaL_checkstring(L, 1);
 #ifdef _WIN32
-  int err = _wmkdir(lua_toutf16(L, path));
+  int err = _wmkdir(winpath(L, path));
 #else
   int err = mkdir(path, S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
 #endif
@@ -536,11 +626,10 @@ static int ppm_mkdir(lua_State *L) {
 static int ppm_stat(lua_State *L) {
   const char *path = luaL_checkstring(L, 1);
 #ifdef _WIN32
-  wchar_t full_path[MAX_PATH];
   struct _stat s;
-  LPCWSTR wpath = lua_toutf16(L, path);
+  LPCWSTR wpath = winpath(L, path);
   int err = _wstat(wpath, &s);
-  const char *abs_path = !err && _wfullpath(full_path, wpath, MAX_PATH) ? lua_toutf8(L, (LPCWSTR)full_path) : NULL;
+  const char *abs_path = !err ? display_path(L, wpath) : NULL;
 #else
   char full_path[MAX_PATH];
   struct stat s;
@@ -574,14 +663,12 @@ static int ppm_stat(lua_State *L) {
   err = err || GetFileAttributesExW(wpath, GetFileExInfoStandard, &data) == 0;
   if (!err && (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY && data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
     HANDLE file = CreateFileW(wpath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, NULL);
-    wchar_t linkpath[MAX_PATH]={0};
-    if (file != INVALID_HANDLE_VALUE && GetFinalPathNameByHandleW(file, linkpath, sizeof(linkpath)/sizeof(wchar_t), FILE_NAME_NORMALIZED) > 0) {
-      // this returns paths like \\?\C:\ for reasons that are completely beyond me. What the actual fuck.
-      lua_toutf8(L, linkpath);
-      lua_pushstring(L, lua_tostring(L, -1) + 4);
-      lua_replace(L, -2);
-    } else
-      lua_pushboolean(L, 1);
+    DWORD capacity = file != INVALID_HANDLE_VALUE ? GetFinalPathNameByHandleW(file, NULL, 0, FILE_NAME_NORMALIZED) : 0;
+    wchar_t *linkpath = capacity ? malloc(capacity * sizeof(wchar_t)) : NULL;
+    DWORD length = linkpath ? GetFinalPathNameByHandleW(file, linkpath, capacity, FILE_NAME_NORMALIZED) : 0;
+    if (length && length < capacity) display_path(L, linkpath);
+    else lua_pushboolean(L, 1);
+    free(linkpath);
     if (file != INVALID_HANDLE_VALUE)
       CloseHandle(file);
   } else
@@ -678,7 +765,7 @@ static int ppm_trace(lua_State* L) {
   // and we don't need to call it every time we run ppm.
   static int git_initialized = 0;
   static int git_cert_type = 0;
-  static char git_cert_path[MAX_PATH];
+  static const char *git_cert_path;
   static void git_init() {
     if (!git_initialized) {
       git_libgit2_init();
@@ -736,32 +823,29 @@ static int ppm_trace(lua_State* L) {
     lua_pushhexstring(L, digest, sizeof(digest));
   }
 
-  static int git_push_tree_hashes(lua_State* L, git_repository* repository, const git_tree* tree, const char* prefix, unsigned depth) {
-    if (depth > 64) return -1;
+  static int git_push_tree_hashes(lua_State* L, git_repository* repository, const git_tree* tree, const char* prefix, unsigned depth, int table) {
+    if (depth > 64 || !lua_checkstack(L, 4)) return -1;
     for (size_t i = 0; i < git_tree_entrycount(tree); ++i) {
       const git_tree_entry* entry = git_tree_entry_byindex(tree, i);
       const char* name = git_tree_entry_name(entry);
       if (name[0] == '.') continue;
-      if (strlen(prefix) + strlen(name) + 2 > MAX_PATH) return -1;
-      char path[MAX_PATH];
-      memcpy(path, prefix, strlen(prefix));
-      memcpy(path + strlen(prefix), name, strlen(name) + 1);
+      const char *path = lua_pushfstring(L, "%s%s%s", prefix, *prefix ? "/" : "", name);
       if (git_tree_entry_type(entry) == GIT_OBJECT_TREE) {
         git_tree* child = NULL;
         if (git_tree_lookup(&child, repository, git_tree_entry_id(entry))) return -1;
-        strcat(path, "/");
-        int result = git_push_tree_hashes(L, repository, child, path, depth + 1);
+        int result = git_push_tree_hashes(L, repository, child, path, depth + 1, table);
         git_tree_free(child);
         if (result) return result;
       } else if (git_tree_entry_filemode(entry) == GIT_FILEMODE_BLOB || git_tree_entry_filemode(entry) == GIT_FILEMODE_BLOB_EXECUTABLE) {
         git_blob* blob = NULL;
         if (git_blob_lookup(&blob, repository, git_tree_entry_id(entry))) return -1;
         git_push_blob_hash(L, blob);
-        lua_setfield(L, -2, path);
+        lua_setfield(L, table, path);
         git_blob_free(blob);
       } else {
         return -1;
       }
+      lua_pop(L, 1);
     }
     return 0;
   }
@@ -809,7 +893,7 @@ static int ppm_trace(lua_State* L) {
           git_push_blob_hash(L, (git_blob*)object);
           lua_setfield(L, -2, "");
         } else if (git_object_type(object) == GIT_OBJECT_TREE) {
-          error = git_push_tree_hashes(L, repository, (git_tree*)object, "", 0);
+          error = git_push_tree_hashes(L, repository, (git_tree*)object, "", 0, lua_gettop(L));
         } else error = -1;
         if (error) lua_pop(L, 1);
       } else if (git_object_type(object) == GIT_OBJECT_BLOB) {
@@ -840,7 +924,17 @@ static int ppm_trace(lua_State* L) {
       reset_type = GIT_RESET_MIXED;
     else if (strcmp(type, "hard") == 0)
       reset_type = GIT_RESET_HARD;
-    int result = git_reset(repository, (git_object*)commit, reset_type, NULL);
+    int result = 0;
+    #ifdef _WIN32
+      /* libgit2 separately enforces MAX_PATH on worktree checkouts. */
+      git_config* config = NULL;
+      result = git_repository_config(&config, repository);
+      int enabled = 0;
+      if (!result && (git_config_get_bool(&enabled, config, "core.longpaths") || !enabled))
+        result = git_config_set_bool(config, "core.longpaths", 1);
+      git_config_free(config);
+    #endif
+    if (!result) result = git_reset(repository, (git_object*)commit, reset_type, NULL);
     git_commit_free(commit);
     git_repository_free(repository);
     if (result)
@@ -1040,14 +1134,38 @@ static int ppm_trace(lua_State* L) {
   static int ppm_git_read(lua_State* L) { return luaL_error(L, "this binary was compiled without git support"); }
 #endif
 
+#ifdef _WIN32
+/* Keep sharing violations distinguishable even when Windows localizes the message. */
+static int ppm_file_error(lua_State* L, DWORD code, const char* path) {
+  if (code != ERROR_SHARING_VIOLATION && code != ERROR_LOCK_VIOLATION && code != ERROR_USER_MAPPED_FILE)
+    return luaL_win32_error(L, code, "cannot replace %s", path);
+  lua_newtable(L);
+  lua_pushliteral(L, "file_in_use"); lua_setfield(L, -2, "code");
+  lua_pushfstring(L, "File in use: %s", path); lua_setfield(L, -2, "message");
+  return lua_error(L);
+}
+
+static int ppm_check_removable(lua_State* L) {
+  const char *path = luaL_checkstring(L, 1);
+  HANDLE file = CreateFileW(winpath(L, path), DELETE,
+    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+  if (file == INVALID_HANDLE_VALUE)
+    return ppm_file_error(L, GetLastError(), path);
+  CloseHandle(file);
+  return 0;
+}
+#endif
+
 static int ppm_replace_file(lua_State* L) {
   const char* source = luaL_checkstring(L, 1);
   const char* target = luaL_checkstring(L, 2);
   #ifdef _WIN32
-    LPCWSTR wsource = lua_toutf16(L, source);
-    LPCWSTR wtarget = lua_toutf16(L, target);
-    if (!MoveFileExW(wsource, wtarget, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-      return luaL_win32_error(L, GetLastError(), "can't replace file");
+    BOOL replace = lua_isnoneornil(L, 3) || lua_toboolean(L, 3);
+    LPCWSTR wsource = winpath(L, source);
+    LPCWSTR wtarget = winpath(L, target);
+    if (!MoveFileExW(wsource, wtarget, MOVEFILE_WRITE_THROUGH | (replace ? MOVEFILE_REPLACE_EXISTING : 0)))
+      return ppm_file_error(L, GetLastError(), replace ? target : source);
   #else
     if (rename(source, target))
       return luaL_error(L, "can't replace %s: %s", target, strerror(errno));
@@ -1056,24 +1174,34 @@ static int ppm_replace_file(lua_State* L) {
 }
 
 static int mkdirp(lua_State* L, char* path, int len) {
+#ifdef _WIN32
+  LPCWSTR absolute = winpath(L, path), start;
+  if (FAILED(PathCchSkipRoot(absolute, &start))) { lua_pop(L, 1); errno = EINVAL; return -1; }
+  wchar_t *copy = lua_newuserdata(L, (wcslen(absolute) + 1) * sizeof(wchar_t));
+  wcscpy(copy, absolute);
+  int result = 0;
+  for (wchar_t *p = copy + (start - absolute); ; ++p) {
+    wchar_t ch = *p;
+    if (ch == L'\\' || (!ch && len && (path[len-1] == '/' || path[len-1] == '\\'))) {
+      *p = 0;
+      if (_wmkdir(copy) && errno != EEXIST) { result = -1; break; }
+      *p = ch;
+    }
+    if (!ch) break;
+  }
+  lua_pop(L, 2);
+  return result;
+#else
   for (int i = 0; i < len; ++i) {
     if (path[i] == '/' && i > 0) {
       path[i] = 0;
-      #ifdef _WIN32
-        LPCWSTR wpath = lua_toutf16(L, path);
-        if (_wmkdir(wpath) && errno != EEXIST) {
-          lua_pop(L, 1);
-          return -1;
-        }
-        lua_pop(L, 1);
-      #else
-        if (mkdir(path, S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH) && errno != EEXIST)
-          return -1;
-      #endif
+      if (mkdir(path, S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH) && errno != EEXIST)
+        return -1;
       path[i] = '/';
     }
   }
   return 0;
+#endif
 }
 
 #define FA_RDONLY       0x01            // FILE_ATTRIBUTE_READONLY
@@ -1084,39 +1212,53 @@ static int mkdirp(lua_State* L, char* path, int len) {
 static const char* strip_to_tar(char* dst, const char* src) {
   int len = strlen(src);
   if (strstr(src, ".tar") || strstr(src, ".gz") || strstr(src, ".xz")) {
-    strncpy(dst, src, imin(len - 3, PATH_MAX));
+    memcpy(dst, src, len - 3);
     len -= 3;
   } else if (strstr(src, ".tgz") || strstr(src, ".txz")) {
-    strncpy(dst, src, imin(len - 3, PATH_MAX));
-    strcat(dst, "tar");
+    memcpy(dst, src, len - 3);
+    memcpy(dst + len - 3, "tar", 3);
   } else
     strcpy(dst, src);
   dst[len] = 0;
   return dst;
 }
 
+/* microtar accepts a custom stream; open it through the same path layer as ZIP. */
+static int tar_read(mtar_t* tar, void* data, unsigned size) {
+  return fread(data, 1, size, tar->stream) == size ? MTAR_ESUCCESS : MTAR_EREADFAIL;
+}
+
+static int tar_seek(mtar_t* tar, unsigned pos) {
+  return fseek(tar->stream, pos, SEEK_SET) == 0 ? MTAR_ESUCCESS : MTAR_ESEEKFAIL;
+}
+
+static int tar_close(mtar_t* tar) {
+  return fclose(tar->stream);
+}
+
 static int ppm_extract(lua_State* L) {
   const char* src = luaL_checkstring(L, 1);
   const char* dst = luaL_checkstring(L, 2);
-
-  if (strlen(src) > PATH_MAX)
-    return luaL_error(L, "source path too large");
 
   char error[128] = {0};
   uint8_t inbuf[4096];
   uint8_t outbuf[4096];
 
   if (strstr(src, ".zip")) {
-    int zip_error_code;
-    zip_t* archive = zip_open(src, ZIP_RDONLY, &zip_error_code);
+    zip_error_t zip_error;
+    zip_error_init(&zip_error);
+    FILE *input = lua_fopen(L, src, "rb");
+    if (!input) return luaL_error(L, "can't open zip archive %s: %s", src, strerror(errno));
+    zip_source_t *source = zip_source_filep_create(input, 0, -1, &zip_error);
+    zip_t* archive = source ? zip_open_from_source(source, ZIP_RDONLY, &zip_error) : NULL;
 
     if (!archive) {
-      zip_error_t zip_error;
-      zip_error_init_with_code(&zip_error, zip_error_code);
+      if (source) zip_source_free(source); else fclose(input);
       lua_pushfstring(L, "can't open zip archive %s: %s", src, zip_error_strerror(&zip_error));
       zip_error_fini(&zip_error);
       return lua_error(L);
     }
+    zip_error_fini(&zip_error);
 
     zip_int64_t entries = zip_get_num_entries(archive, 0);
     for (zip_int64_t i = 0; i < entries; ++i) {
@@ -1129,8 +1271,8 @@ static int ppm_extract(lua_State* L) {
         return lua_error(L);
       }
 
-      char target[MAX_PATH];
-      int target_length = snprintf(target, sizeof(target), "%s/%s", dst, zip_name);
+      char *target = lua_newuserdata(L, strlen(dst) + strlen(zip_name) + 2);
+      int target_length = sprintf(target, "%s/%s", dst, zip_name);
 
       if (mkdirp(L, target, target_length)) {
         zip_fclose(zip_file);
@@ -1160,7 +1302,8 @@ static int ppm_extract(lua_State* L) {
           m = (attr >> 16);
         }
 
-        if (chmod(target, m)) {
+        if (file_chmod(L, target, m)) {
+          fclose(file);
           zip_fclose(zip_file);
           zip_close(archive);
           return luaL_error(L, "can't chmod file %s: %s", target, strerror(errno));
@@ -1184,13 +1327,19 @@ static int ppm_extract(lua_State* L) {
         fclose(file);
       }
       zip_fclose(zip_file);
+      lua_pop(L, 1); /* target */
     }
     zip_close(archive);
   } else {
-    char actual_src[PATH_MAX];
+    char *actual_src = lua_newuserdata(L, strlen(src) + 1);
 
     if (strstr(src, ".gz") || strstr(src, ".tgz")) {
+      #ifdef _WIN32
+      gzFile gzfile = gzopen_w(winpath(L, src), "rb");
+      lua_pop(L, 1);
+      #else
       gzFile gzfile = gzopen(src, "rb");
+      #endif
       if (!gzfile)
         return luaL_error(L, "can't open tar.gz archive %s: %s", src, strerror(errno));
       FILE* file = lua_fopen(L, strip_to_tar(actual_src, src), "wb");
@@ -1269,16 +1418,14 @@ static int ppm_extract(lua_State* L) {
 
     if (strstr(src, ".tar") || strstr(src, ".tgz")) {
       // It's incredily slow to seek/read directly from a gzfile; so just unzip to an intermediate file first.
-      mtar_t tar = {0};
+      mtar_t tar = { .read = tar_read, .seek = tar_seek, .close = tar_close, .stream = lua_fopen(L, actual_src, "rb") };
       int err;
-      if ((err = mtar_open(&tar, actual_src, "r")))
-        return luaL_error(L, "can't open tar archive %s: %s", src, mtar_strerror(err));
+      if (!tar.stream)
+        return luaL_error(L, "can't open tar archive %s: %s", src, strerror(errno));
 
       mtar_header_t h = {0}, before_h = {0}, always_h = {0};
       int has_ext_before = 0, has_ext_always = 0;
-      char target[MAX_PATH];
-
-      while ((mtar_read_header(&tar, &h)) != MTAR_ENULLRECORD ) {
+      while ((err = mtar_read_header(&tar, &h)) == MTAR_ESUCCESS) {
         switch (h.type) {
           case MTAR_TSYM:
           case MTAR_TDIR:
@@ -1291,7 +1438,9 @@ static int ppm_extract(lua_State* L) {
             } else if (has_ext_always) {
               mtar_update_header(&h, &always_h);
             }
-            int target_length = snprintf(target, sizeof(target), "%s/%s", dst, h.name);
+            int top = lua_gettop(L);
+            char *target = lua_newuserdata(L, strlen(dst) + strlen(h.name) + 2);
+            int target_length = sprintf(target, "%s/%s", dst, h.name);
 
             if (mkdirp(L, target, target_length)) {
               mtar_close(&tar);
@@ -1328,10 +1477,11 @@ static int ppm_extract(lua_State* L) {
               }
               fclose(file);
             }
-            if (h.type != MTAR_TSYM && chmod(target, h.mode)) {
+            if (h.type != MTAR_TSYM && file_chmod(L, target, h.mode)) {
               mtar_close(&tar);
               return luaL_error(L, "can't extract tar archive file %s, can't chmod file %s: %s", src, target, strerror(errno));
             }
+            lua_settop(L, top);
           } break;
           case MTAR_TEHR:
           case MTAR_TEHRA: {
@@ -1412,8 +1562,15 @@ static int ppm_extract(lua_State* L) {
         }
       }
       mtar_close(&tar);
-      if (strcmp(actual_src, src) != 0)
+      if (err != MTAR_ENULLRECORD)
+        return luaL_error(L, "can't read tar archive %s: %s", src, mtar_strerror(err));
+      if (strcmp(actual_src, src) != 0) {
+        #ifdef _WIN32
+        _wremove(winpath(L, actual_src));
+        #else
         unlink(actual_src);
+        #endif
+      }
     }
   }
   return 0;
@@ -1484,6 +1641,11 @@ static int ppm_extract(lua_State* L) {
       }
     } else {
       const char* path = luaL_checkstring(L, 2);
+      #ifdef _WIN32
+        path = lua_toutf8(L, winpath(L, path));
+      #endif
+      git_cert_path = lua_pushstring(L, path);
+      lua_setfield(L, LUA_REGISTRYINDEX, "ppm.git_cert_path");
       if (strcmp(type, "dir") == 0) {
         git_cert_type = 1;
         if (git_initialized) {
@@ -1493,7 +1655,6 @@ static int ppm_extract(lua_State* L) {
           }
           git_libgit2_opts(GIT_OPT_SET_SSL_CERT_LOCATIONS, NULL, path);
         }
-        strncpy(git_cert_path, path, MAX_PATH);
         if (print_trace) {
           fprintf(stderr, "[ssl] SSL directory set to %s.\n", git_cert_path);
           fflush(stderr);
@@ -1608,7 +1769,6 @@ static int ppm_extract(lua_State* L) {
           }
           git_libgit2_opts(GIT_OPT_SET_SSL_CERT_LOCATIONS, path, NULL);
         }
-        strncpy(git_cert_path, path, MAX_PATH);
         if (print_trace) {
           fprintf(stderr, "[ssl] SSL file set to %s.\n", git_cert_path);
           fflush(stderr);
@@ -2076,7 +2236,7 @@ static int ppm_extract(lua_State* L) {
 
 static int ppm_chdir(lua_State* L) {
   #ifdef _WIN32
-    if (_wchdir(lua_toutf16(L, luaL_checkstring(L, 1))))
+    if (_wchdir(winpath(L, luaL_checkstring(L, 1))))
   #else
     if (chdir(luaL_checkstring(L, 1)))
   #endif
@@ -2086,10 +2246,11 @@ static int ppm_chdir(lua_State* L) {
 
 static int ppm_pwd(lua_State* L) {
   #ifdef _WIN32
-    wchar_t buffer[MAX_PATH];
-    if (!_wgetcwd(buffer, sizeof(buffer)))
+    wchar_t *buffer = _wgetcwd(NULL, 0);
+    if (!buffer)
       return luaL_error(L, "error getcwd: %s", strerror(errno));
-    lua_toutf8(L, buffer);
+    display_path(L, buffer);
+    free(buffer);
   #else
     char buffer[MAX_PATH];
     if (!getcwd(buffer, sizeof(buffer)))
@@ -2105,7 +2266,7 @@ static int ppm_flock(lua_State* L) {
   int error_handler = lua_type(L, 3) == LUA_TFUNCTION ? 3 : 0;
   int warning_handler = lua_type(L, 4) == LUA_TFUNCTION ? 4 : 0;
   #ifdef _WIN32
-    HANDLE file = CreateFileW(lua_toutf16(L, path), FILE_SHARE_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
+    HANDLE file = CreateFileW(winpath(L, path), FILE_SHARE_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
     if (!file || file == INVALID_HANDLE_VALUE)
       return luaL_win32_error(L, GetLastError(), "can't open for flock %s", path);
     OVERLAPPED overlapped = {0};
@@ -2227,6 +2388,10 @@ static const luaL_Reg system_lib[] = {
   { "git_history", ppm_git_history }, // Visits locally reachable commits without changing HEAD.
   { "git_read",  ppm_git_read }, // Reads committed files, object IDs, or payload hashes.
   { "replace_file", ppm_replace_file }, // Atomically replaces a file on every supported platform.
+#ifdef _WIN32
+  { "check_removable", ppm_check_removable },
+  { "fopen", ppm_file_open }, { "remove", ppm_file_remove }, { "rename", ppm_file_rename },
+#endif
   { "request",   ppm_request },  // HTTP(s) GET/HEAD request.
   { "extract",   ppm_extract },  // Extracts .tar.gz, and .zip files.
   { "trace",     ppm_trace },    // Sets trace bit.
@@ -2364,21 +2529,25 @@ int main(int argc, char* argv[]) {
   #endif
   lua_setglobal(L, "PATHSEP");
   #if _WIN32
-    wchar_t tmpdir[MAX_PATH];
-    DWORD length = GetTempPathW(MAX_PATH, tmpdir);
-    tmpdir[length - 1] = 0;
+    DWORD capacity = GetTempPathW(0, NULL);
+    wchar_t *tmpdir = lua_newuserdata(L, capacity * sizeof(wchar_t));
+    DWORD length = capacity ? GetTempPathW(capacity, tmpdir) : 0;
+    if (!length || length >= capacity) return luaL_error(L, "cannot resolve Windows temporary directory");
+    if (length > 3 && tmpdir[length - 1] == L'\\') tmpdir[length - 1] = 0;
     lua_toutf8(L, tmpdir);
+    lua_remove(L, -2);
   #else
     lua_pushstring(L, getenv("TMPDIR") ? getenv("TMPDIR") : P_tmpdir);
   #endif
   lua_setglobal(L, "SYSTMPDIR");
 
   #if _WIN32
-    wchar_t selfpath[MAX_PATH] = {0};
-    if (GetModuleFileNameW(0, selfpath, MAX_PATH - 1))
-      lua_toutf8(L, selfpath);
+    wchar_t *selfpath = lua_newuserdata(L, PATHCCH_MAX_CCH * sizeof(wchar_t));
+    length = GetModuleFileNameW(NULL, selfpath, PATHCCH_MAX_CCH);
+    if (length && length < PATHCCH_MAX_CCH) display_path(L, selfpath);
     else
       lua_pushnil(L);
+    lua_remove(L, -2);
   #elif __linux__ || __serenity__
     char selfpath[PATH_MAX] = {0};
     int length = readlink("/proc/self/exe", selfpath, PATH_MAX);

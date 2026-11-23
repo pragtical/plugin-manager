@@ -381,6 +381,9 @@ end
 
 
 global({ common = {} })
+common.fopen = system.fopen or io.open
+common.file_rename = system.rename or os.rename
+common.file_remove = system.remove or os.remove
 function common.merge(dst, src) for k, v in pairs(src) do dst[k] = v end return dst end
 function common.map(l, p) local t = {} for i, v in ipairs(l) do table.insert(t, p(v, i)) end return t end
 function common.each(l, p) for i, v in ipairs(l) do p(v) end end
@@ -391,8 +394,13 @@ function common.first(l, p) for i, v in ipairs(l) do if (type(p) == 'function' a
 function common.slice(t, i, l) local n = {} for j = i, l ~= nil and (i - l) or #t do table.insert(n, t[j]) end return n end
 function common.join(j, l) local s = "" for i, v in ipairs(l) do if i > 1 then s = s .. j .. v else s = v end end return s end
 function common.sort(t, f) table.sort(t, f) return t end
-function common.write(path, contents) local f, err = io.open(path, "wb") if not f then error("can't write to " .. path .. ": " .. err) end f:write(contents) f:flush() f:close() end
-function common.read(path) local f, err = io.open(path, "rb") if not f then error("can't read from " .. path .. ": " .. err) end local str = f:read("*all") f:close() return str end
+function common.write(path, contents)
+  local f = assert(common.fopen(path, "wb"))
+  local ok, err = f:write(contents)
+  local closed, close_error = f:close()
+  assert(ok and closed, err or close_error)
+end
+function common.read(path) local f, err = common.fopen(path, "rb") if not f then error("can't read from " .. path .. ": " .. err) end local str = f:read("*all") f:close() return str end
 function common.uniq(l) local t = {} local k = {} for i,v in ipairs(l) do if not k[v] then table.insert(t, v) k[v] = true end end return t end
 function common.delete(h, d) local t = {} for k,v in pairs(h) do if k ~= d then t[k] = v end end return t end
 function common.intersection(a,b)
@@ -431,11 +439,11 @@ function common.rmrf(root)
     if PLATFORM == "windows" and info.symlink and info.type == "dir" then
       system.rmdir(root)
     else
-      local status, err = os.remove(root)
+      local status, err = common.file_remove(root)
       if not status then
         if not err:find("denied") then error("can't remove " .. root .. ": " .. err) end
         system.chmod(root, 448) -- chmod so that we can write, for windows.
-        status, err = os.remove(root)
+        status, err = common.file_remove(root)
         if not status then error("can't remove " .. root .. ": " .. err) end
       end
     end
@@ -477,17 +485,18 @@ function common.symlink(src, dst)
 end
 
 function common.copy(src, dst, hidden, symlink)
-  local src_stat, dst_stat = system.stat(src), system.stat(dst)
-  if not src_stat then error("can't find " .. src) end
+  local src_stat, err = system.stat(src)
+  if not src_stat then error("can't stat " .. src .. ": " .. tostring(err)) end
   if not hidden and common.basename(src):find("^%.") then return end
+  local dst_stat = system.stat(dst)
   if dst_stat and dst_stat.type == "dir" then return common.copy(src, dst .. PATHSEP .. common.basename(src), hidden, symlink) end
   if src_stat.type == "dir" then
     common.mkdirp(dst)
     for i, file in ipairs(system.ls(src)) do common.copy(src .. PATHSEP .. file, dst .. PATHSEP .. file, hidden, symlink) end
   elseif not symlink then
-    local src_io, err1 = io.open(src, "rb")
+    local src_io, err1 = common.fopen(src, "rb")
     if err1 then error("can't open for reading " .. src .. ": " .. err1) end
-    local dst_io, err2 = io.open(dst, "wb")
+    local dst_io, err2 = common.fopen(dst, "wb")
     if err2 then error("can't open for writing " .. dst .. ": " .. err2) end
     while true do
       local chunk = src_io:read(64*1024)
@@ -502,7 +511,7 @@ function common.copy(src, dst, hidden, symlink)
   end
 end
 function common.rename(src, dst)
-  if not os.rename(src, dst) then
+  if not common.file_rename(src, dst) then
     common.copy(src, dst)
     common.rmrf(src)
   end
@@ -627,7 +636,7 @@ function log.progress_action(message)
   if write_progress_bar then
     progress_bar_label = message
     if JSON and PROGRESS then
-      io.stdout:write(json.encode({ progress = { percent = 0, label = progress_bar_label } }) .. "\n")
+      io.stdout:write(json.encode({ progress = { label = progress_bar_label } }) .. "\n")
       io.stdout:flush()
     end
   else
@@ -685,7 +694,7 @@ function common.request(method, source, options)
     end
     common.rename(cache_path .. ".part", cache_path)
   end
-  if target then common.copy(cache_path, target) else res = io.open(cache_path, "rb"):read("*all") end
+  if target then common.copy(cache_path, target) else res = common.fopen(cache_path, "rb"):read("*all") end
   if checksum == "SKIP" then common.rmrf(cache_path) end
   return res, headers
 end
@@ -694,15 +703,22 @@ function common.head(source, options) return select(2, common.request("HEAD", so
 
 
 -- Determines whether two addons located at different paths are actually different based on their contents.
--- If path1 is a directory, will still return true if it's a subset of path2 (accounting for binary downloads).
-function common.is_path_different(path1, path2)
+-- If path1 is a directory, allow extra files in path2 (such as binary downloads).
+function common.is_path_different(path1, path2, bundled)
   local stat1, stat2 = system.stat(path1), system.stat(path2)
-  if not stat1 or not stat2 or stat1.type ~= stat2.type or (stat1 == "file" and stat1.size ~= stat2.size) then return true end
+  if not stat1 or not stat2 or stat1.type ~= stat2.type then return true end
   if stat1.type == "dir" then
     for i, file in ipairs(system.ls(path1)) do
-      if not common.basename(file):find("^%.") and common.is_path_different(path1 .. PATHSEP .. file, path2 .. PATHSEP.. file) then return true end
+      if not common.basename(file):find("^%.") and common.is_path_different(path1 .. PATHSEP .. file, path2 .. PATHSEP.. file, bundled) then return true end
     end
     return false
+  end
+  -- Bundled Lua can come from a checkout with different line endings.
+  if bundled and path1:match("%.lua$") and path2:match("%.lua$") then
+    local a, b = common.read(path1), common.read(path2)
+    if a == b then return false end
+    if a:find("%z") or b:find("%z") then return true end
+    return a:gsub("\r\n", "\n") ~= b:gsub("\r\n", "\n")
   end
   return system.hash(path1, "file") ~= system.hash(path2, "file")
 end
@@ -740,6 +756,74 @@ local function compatible_modversion(pragtical_modversion, addon_modversion)
 end
 
 local installations = { records = {}, cache = {}, histories = {}, wanted = {}, replacements = {} }
+
+-- During staging the resolver sees live addons overlaid with this batch's changes.
+local stage
+local folders = { plugins = true, colors = true, fonts = true, libraries = true }
+
+-- Include hidden files and directory membership: a later local addition must
+-- invalidate replacement of the whole addon just as a changed file would.
+local function digest(path, depth, check_locks)
+  local info = system.stat(path)
+  if not info then return false end
+  assert(not info.symlink and (depth or 0) < 64, "cannot stage linked or deeply nested target: " .. path)
+  if check_locks and system.check_removable then system.check_removable(path) end
+  if info.type == "file" then return system.hash(path, "file") end
+  assert(info.type == "dir", "unsupported addon path: " .. path)
+  local files = system.ls(path)
+  table.sort(files)
+  for i, name in ipairs(files) do
+    files[i] = name .. "\0" .. digest(path .. "/" .. name, (depth or 0) + 1, check_locks)
+  end
+  return system.hash("dir\0" .. table.concat(files, "\0"))
+end
+
+local function relative_addon(path)
+  local prefix = USERDIR .. PATHSEP
+  assert(path:sub(1, #prefix) == prefix, "target outside user profile: " .. path)
+  local rel = path:sub(#prefix + 1):gsub("\\", "/")
+  local folder, name = rel:match("^([^/]+)/([^/]+)$")
+  assert(folders[folder] and name:match("^[%w_ .%-]+$") and not name:match("^%.")
+    and not name:match("[%. ]$"), "invalid addon target: " .. path)
+  assert(not (folder == "plugins" and name:lower() == "plugin_manager")
+    and not (folder == "plugins" and name:lower() == "plugin_manager.lua"), "Plugin Manager cannot replace itself")
+  return rel
+end
+
+local function mark_target(rel, id)
+  if not stage.targets[rel] then
+    stage.targets[rel] = { id = id, before = digest(USERDIR .. "/" .. rel) }
+  end
+  stage.targets[rel].slot = stage.write_slots[rel] or "a"
+  stage.changed[rel] = true
+  if stage.request.action == "upgrade" and stage.targets[rel].before then
+    stage.request.upgrades[id] = true
+  end
+end
+
+local function overlay(path)
+  if stage then
+    local rel = path:sub(#USERDIR + 2):gsub("\\", "/")
+    if stage.targets[rel] then return stage.dir .. "/" .. stage.targets[rel].slot .. "/" .. rel end
+  end
+  return path
+end
+
+local function addon_names(path, user)
+  local names = system.stat(path) and system.ls(path) or {}
+  if stage and user then
+    local prefix = common.basename(path) .. "/"
+    local seen = {}
+    for _, name in ipairs(names) do seen[name] = true end
+    for rel, target in pairs(stage.targets) do
+      if rel:sub(1, #prefix) == prefix then
+        seen[rel:sub(#prefix + 1)] = system.stat(stage.dir .. "/" .. target.slot .. "/" .. rel) ~= nil or nil
+      end
+    end
+    names = common.canonical_order(seen)
+  end
+  return names
+end
 
 function installations.key(path)
   local stat = system.stat(path)
@@ -781,7 +865,7 @@ function installations.atomic_write(path, contents)
   local temporary = path .. ".part"
   common.write(temporary, contents)
   local ok, err = pcall(system.replace_file, temporary, path)
-  if not ok then os.remove(temporary); error(err, 0) end
+  if not ok then common.file_remove(temporary); error(err, 0) end
 end
 
 function installations.load()
@@ -817,6 +901,7 @@ end
 
 function installations.save()
   if installations.readonly then error("installation ledger is invalid; restore or remove it before changing plugins") end
+  if stage then stage.save_records = true; return end
   local path = CONFIGDIR .. PATHSEP .. "installations.json"
   if system.stat(path) then
     local ok, previous = pcall(function()
@@ -1034,8 +1119,9 @@ function installations.recover(path, candidates, previous)
   return not ambiguous and found or nil
 end
 
-function installations.inspect(path, candidates, bottle)
-  local key = installations.key(path)
+function installations.inspect(path, candidates, bottle, live_path)
+  local staged = path ~= live_path
+  local key = installations.key(live_path)
   local records = bottle.pending_installations or installations.records
   if bottle.pending_installations then
     local root = bottle.local_path .. PATHSEP .. "user" .. PATHSEP
@@ -1043,7 +1129,8 @@ function installations.inspect(path, candidates, bottle)
   end
   local record = records[key]
   if record and (record.id ~= candidates.id or record.type ~= candidates.type) then record = nil end
-  local clean = record and installations.matches(record.files, path)
+  -- Published payloads are immutable. Apply verifies their digest before moving them.
+  local clean = record and (staged or installations.matches(record.files, path))
   if not clean then
     local recovered = installations.recover(path, candidates, record)
     if recovered then
@@ -1066,6 +1153,7 @@ function installations.inspect(path, candidates, bottle)
       if not clean then state.status = "modified"
       elseif not latest then state.status = "installed"
       elseif compare_version(record.version, installations.version(latest)) < 0 then state.status = "upgradable"
+      elseif staged and stage.request.action ~= "upgrade" and not stage.requested[record.id] then state.status = "installed"
       else
         local ok, expected = pcall(installations.expected, latest)
         local payload_changed = ok and expected and (not installations.matches(expected, path) or
@@ -1085,7 +1173,8 @@ function installations.capture(addon, bottle, path)
   local record = installations.record(addon, installations.files(path))
   local ok, payload = pcall(installations.expected, addon)
   record.payload = ok and payload or nil
-  local target = bottle.installation_root and addon:get_install_path_at(bottle.installation_root) or path
+  local target = stage and addon:get_install_path_at(USERDIR) or
+    (bottle.installation_root and addon:get_install_path_at(bottle.installation_root) or path)
   if bottle.pending_installations then bottle.pending_installations[installations.key(target)] = record
   else installations.records[installations.key(target)] = record; installations.save() end
 end
@@ -1139,13 +1228,11 @@ function Addon.new(repository, metadata)
     self.dependencies = t
   end
   if not self.local_path and repository then
-    if self.remote then
-      local repo = Repository.url(self.remote)
-      local local_path = repo.local_path and (repo.local_path .. (self.path and (PATHSEP .. self.path:gsub("^/", ""):gsub("%.$", "")) or ""))
-      self.local_path = local_path and system.stat(local_path) and local_path or nil
-    else
-      self.local_path = (repository.local_path .. (self.path and (PATHSEP .. self.path:gsub("^/", ""):gsub("%.$", "")) or "")) or nil
+    local path = (self.remote and Repository.url(self.remote) or repository).local_path
+    if path and self.path and self.path ~= "." and self.path ~= "" then
+      path = path .. PATHSEP .. self.path:gsub("^[/\\]+", "")
     end
+    if path and (not self.remote or system.stat(path)) then self.local_path = path end
   end
   self.organization = metadata.organization or (((self.files and #self.files > 0) or (not self.url and (not self.path or not (self.local_path and (system.stat(self.local_path) or {}).type == "file")))) and "complex" or "singleton")
   return self
@@ -1183,11 +1270,11 @@ function Addon:unstub()
   return repo
 end
 
-function Addon.is_addon_different(downloaded_path, installed_path)
+function Addon.is_addon_different(downloaded_path, installed_path, bundled)
   local is_downloaded_single = downloaded_path:find("%.lua$")
   local is_installed_single = installed_path:find("%.lua$")
   local target = is_downloaded_single and not is_installed_single and installed_path .. PATHSEP .. "init.lua" or installed_path
-  return common.is_path_different(downloaded_path, target)
+  return common.is_path_different(downloaded_path, target, bundled)
 end
 
 function Addon:file_applies_to_arch(file)
@@ -1236,10 +1323,10 @@ function Addon:files_match_install_path(install_path)
   return matched and true or nil
 end
 
-function Addon:matches_install_path(install_path)
+function Addon:matches_install_path(install_path, bundled)
   local files_match = self:files_match_install_path(install_path)
   if files_match ~= nil then return files_match end
-  return self.local_path and not Addon.is_addon_different(self.local_path, install_path)
+  return self.local_path and not Addon.is_addon_different(self.local_path, install_path, bundled)
 end
 
 function Addon:get_install_path_at(root)
@@ -1259,7 +1346,8 @@ end
 
 function Addon:get_install_path(bottle)
   local root = ((self:is_core(bottle) or self:is_bundled()) and bottle.pragtical.datadir_path) or (bottle.local_path and (bottle.local_path .. PATHSEP .. "user") or USERDIR)
-  return self:get_install_path_at(root)
+  local path = self:get_install_path_at(root)
+  return root == USERDIR and overlay(path) or path
 end
 
 function Addon:get_bundled_path(bottle)
@@ -1277,7 +1365,7 @@ function Addon:is_satisfied_by_bundled(bottle)
   if not self.repository or not self.local_path then return false end
   if system.stat(self:get_install_path(bottle)) then return false end
   local bundled_path = self:get_bundled_path(bottle)
-  return system.stat(bundled_path) and not Addon.is_addon_different(self.local_path, bundled_path)
+  return system.stat(bundled_path) and not Addon.is_addon_different(self.local_path, bundled_path, true)
 end
 function Addon:is_installed(bottle)
   if self:is_core(bottle) or self:is_bundled(bottle) or not self.repository then return true end
@@ -1365,6 +1453,13 @@ function Addon:install(bottle, installing)
   end
   if installations.readonly then error("installation ledger is invalid; cannot safely change plugins") end
   local install_root = bottle.local_path and (bottle.local_path .. PATHSEP .. "user") or USERDIR
+  local relative
+  if stage and self.type ~= "meta" then
+    assert(not self:is_core(bottle) and not self:is_bundled(), "cannot stage a bundled target")
+    relative = relative_addon(self:get_install_path_at(USERDIR))
+    install_root = stage.dir .. "/" .. (stage.write_slots[relative] or "a")
+    install_path = install_root .. PATHSEP .. relative:gsub("/", PATHSEP)
+  end
   if install_path:sub(1, #install_root + 1) ~= install_root .. PATHSEP then error("invalid install path: " .. install_path) end
   local temporary_install_path = install_path:sub(1, #TMPDIR + 1) == TMPDIR .. PATHSEP and install_path or
     (TMPDIR .. PATHSEP .. "install" .. PATHSEP .. system.hash(install_root) .. PATHSEP .. install_path:sub(#install_root + 2))
@@ -1397,6 +1492,7 @@ function Addon:install(bottle, installing)
     end
 
     if self.type == "meta" then
+      if stage then stage.meta[self.id] = { dependencies = self.dependencies } end
       log.action("Installed metapackage " .. self.id .. ".", "green")
       return
     end
@@ -1459,7 +1555,7 @@ function Addon:install(bottle, installing)
                   if VERBOSE then log.action("Extracting file " .. basename .. " in " .. install_path .. "...") end
                   target = temporary_install_path .. (not is_archive and (PATHSEP .. basename:gsub(".gz$", "")) or "")
                   system.extract(temporary_path, target)
-                  os.remove(temporary_path)
+                  common.file_remove(temporary_path)
                 end
                 if not is_archive and file.arch and file.arch ~= "*" then system.chmod(target, 448) end -- chmod any ARCH tagged file to rwx-------
               end
@@ -1502,6 +1598,7 @@ function Addon:install(bottle, installing)
       common.mkdirp(common.dirname(install_path))
       common.rename(temporary_install_path, install_path)
     end
+    if stage then mark_target(relative, self.id) end
     installations.capture(self, bottle, install_path)
   end
 end
@@ -1553,6 +1650,7 @@ function Addon:uninstall(bottle, uninstalling, removed)
   end
   common.each(orphans, function(e) e:uninstall(bottle, common.merge(uninstalling or {}, { [self.id] = true }), removed) end)
   if self.type == "meta" then
+    if stage then stage.meta[self.id] = { dependencies = self.dependencies, uninstall = true } end
     log.action("Uninstalling meta " .. self.id .. ".", "green")
   else
     log.action("Uninstalling " .. self.type .. " located at " .. install_path, "green")
@@ -1571,7 +1669,15 @@ function Addon:uninstall(bottle, uninstalling, removed)
       if not addon:uninstall(bottle, common.merge(uninstalling or {}, { [self.id] = true }), removed) then return false end
     end
     local installation_key = installations.key(install_path)
-    common.rmrf(install_path)
+    if stage and self.type ~= "meta" then
+      local live = self:get_install_path_at(USERDIR)
+      local rel = relative_addon(live)
+      mark_target(rel, self.id)
+      -- An unmanaged uninstall need not have a receipt to describe its dependencies.
+      stage.targets[rel].dependencies = self.dependencies
+      install_path, installation_key = stage.dir .. "/" .. stage.targets[rel].slot .. "/" .. rel, installations.key(live)
+    end
+    if self.type ~= "meta" then common.rmrf(install_path) end
     if installations.records[installation_key] then
       installations.records[installation_key] = nil
       installations.save()
@@ -1628,7 +1734,7 @@ end
 
 function Repository.url(url)
   if type(url) == "table" then return (url.remote and (url.remote .. ":" .. (url.branch or url.commit)) or url.repo_path) end
-  if not url:find("^%a+:") then
+  if not url:find("^%a+:") or (PLATFORM == "windows" and url:find("^%a:[/\\]")) then
     local stat = system.stat(url:gsub("[/\\]$", "")) or error("can't find repository " .. url)
     return common.grep(repositories, function(r) return r.repo_path == stat.abs_path end)[1] or Repository.new({ repo_path = stat.abs_path })
   end
@@ -1682,7 +1788,7 @@ function Repository:generate_manifest(repo_id)
   local addons, addon_map = {}, {}
   for _, folder in ipairs({ "plugins", "colors", "libraries", "fonts" }) do
     if system.stat(path .. PATHSEP .. "README.md") then -- If there's a README, parse it for a table like in our primary repository.
-      for line in io.lines(path .. PATHSEP .. "README.md") do
+      for line in common.read(path .. PATHSEP .. "README.md"):gmatch("[^\r\n]+") do
         local _, _, name, path, description = line:find("^%s*%|%s*%[`([%w_]+)%??.-`%]%((.-)%).-%|%s*(.-)%s*%|%s*$")
         if name then
           local id = common.handleize(name)
@@ -1717,7 +1823,7 @@ function Repository:generate_manifest(repo_id)
           if name ~= "init" then
             local type = folder == "libraries" and "library" or folder:sub(1, #folder - 1)
             local addon = { description = nil, id = common.handleize(name), name = name, mod_version = LATEST_MOD_VERSION, version = "0.1", path = (filename ~= "init" and (addon_dir .. PATHSEP .. file) or nil), type = type }
-            for line in io.lines(path .. PATHSEP .. addon_dir .. PATHSEP .. file) do
+            for line in common.read(path .. PATHSEP .. addon_dir .. PATHSEP .. file):gmatch("[^\r\n]+") do
               local _, _, mod_version = line:find("%-%-.*mod%-version:%s*(%w+)")
               if mod_version then addon.mod_version = mod_version end
               local _, _, required_addon = line:find("require [\"']plugins%.([%w_-]+)")
@@ -2203,8 +2309,8 @@ function Bottle:all_addons()
   self.installation_states = {}
   for _, folder in ipairs({ "plugins", "libraries", "fonts", "colors" }) do
     local directory = (self.local_path and (self.local_path .. PATHSEP .. "user") or USERDIR) .. PATHSEP .. folder
-    if system.stat(directory) then
-      for _, file in ipairs(system.ls(directory)) do
+    do
+      for _, file in ipairs(addon_names(directory, true)) do
         local id = common.handleize(file:gsub("%.lua$", ""))
         if not installations.wanted[id] then installations.wanted[id] = true; installations.histories = {} end
       end
@@ -2217,23 +2323,24 @@ function Bottle:all_addons()
       self.pragtical.datadir_path .. PATHSEP .. addon_type
     }
     for i, addon_path in ipairs(addon_paths) do
-      if system.stat(addon_path) then
-        for j, v in ipairs(system.ls(addon_path)) do
+      do
+        for j, v in ipairs(addon_names(addon_path, i == 1)) do
           local id = common.handleize(v:gsub("%.lua$", ""))
-          local path = addon_path .. PATHSEP .. v
+          local live_path = addon_path .. PATHSEP .. v
+          local path = i == 1 and overlay(live_path) or live_path
           if i == 1 then user_addons[id] = true end
           -- in the case where we have an existing plugin that targets a stub, then fetch that repository
           local fetchable = hash[id] and common.grep(hash[id], function(e) return e:is_stub() end)[1]
           if fetchable then fetchable:unstub() end
-          local matching = hash[id] and common.grep(hash[id], function(e)
-            return e:matches_install_path(path)
+          local matching = i == 2 and not user_addons[id] and hash[id] and common.grep(hash[id], function(e)
+            return e:matches_install_path(path, true)
           end)[1]
           local translations = { plugins = "plugin", libraries = "library", fonts = "font", colors = "color" }
           local state
           if i == 1 then
             local candidates = common.grep(hash[id] or {}, function(e) return e.repository and e.type == translations[addon_type] end)
             candidates.id, candidates.type = candidates[1] and candidates[1].id or id, translations[addon_type]
-            state = installations.inspect(path, candidates, self)
+            state = installations.inspect(path, candidates, self, live_path)
             self.installation_states[installations.key(path)] = state
             matching = state.status == "installed" and common.grep(candidates, function(e)
               return state.record and state.record.version == installations.version(e) and installations.source_matches(state.record, e)
@@ -2381,6 +2488,7 @@ local function get_repository(url)
 end
 
 function ppm.settings_save()
+  if stage then stage.save_settings = true; return end
   common.write(CONFIGDIR .. PATHSEP .. "settings.json", json.encode(settings))
 end
 
@@ -2469,7 +2577,7 @@ local function get_pragticals()
   return common.concat(pragticals, common.flat_map(repositories, function(e) return e.pragticals end))
 end
 
-function ppm.update(...)
+function ppm.update_addon_repositories(...)
   ppm.repo_update(...)
   local updated_remotes = {}
   for _, repo in ipairs(repositories) do
@@ -2480,6 +2588,10 @@ function ppm.update(...)
       end
     end
   end
+end
+
+function ppm.update(...)
+  ppm.update_addon_repositories(...)
   -- check to see if any files without checksums have changed if we can HEAD them and determine if they've been updated since we last
   for _, pragtical in ipairs(get_pragticals()) do
     if pragtical:is_installed() and not pragtical:is_local() then
@@ -2645,7 +2757,7 @@ function ppm.pragtical_switch(version, target)
         -- check to see if we can modify this folder (i.e. did we sudo)
         local directory = paths[i]
         local tmp_path = directory .. PATHSEP .. ".ppm-test"
-        local f = io.open(tmp_path, "ab")
+        local f = common.fopen(tmp_path, "ab")
         if f then f:close() end
         common.rmrf(tmp_path)
         if f then
@@ -2918,7 +3030,7 @@ local function get_addon_status(addon)
   return "orphan"
 end
 
-local function print_addon_info(type, addons, filters)
+local function print_addon_info(type, addons, filters, pending)
   local max_id = 4
   local plural = (type or "addon") .. "s"
   local result = { [plural] = { } }
@@ -2963,6 +3075,26 @@ local function print_addon_info(type, addons, filters)
       repo_path = addon.repo_path or (addon.repository and addon.repository.local_path or nil),
       url = url
     }
+    if pending or (JSON and PLATFORM == "windows") then
+      if status == "available" then
+        local prefix = addon.type .. ":" .. addon.id .. ":" .. version .. ":"
+        hash.pending_key = prefix .. "catalog:" .. (addon.catalog_repository or hash.repository)
+        hash.pending_source_key = prefix .. "source:" .. hash.repository
+        if not hash.protected then
+          hash.queue_key, hash.queue_fallback = "install:" .. addon.id .. ":" .. version, "install:" .. addon.id
+        end
+      elseif status ~= "incompatible" then
+        hash.pending_key = installations.key(addon:get_install_path(system_bottle))
+        if status ~= "bundled" and status ~= "core" and addon.id ~= "plugin_manager" then
+          hash.queue_key = "user:" .. addon.id
+          if status == "upgradable" and not hash.protected then hash.queue_fallback = "upgrade:*" end
+        end
+      end
+      if pending then
+        hash.pending_action = pending[hash.pending_key] or pending[hash.pending_source_key] or pending[hash.queue_key]
+          or (not pending["except:" .. addon.id] and pending[hash.queue_fallback] or nil)
+      end
+    end
     if addon_matches_filter(hash, filters or {}) then
       table.insert(result[plural], hash)
     end
@@ -3097,22 +3229,20 @@ function ppm.repo_list()
   end
 end
 
-function ppm.addon_list(type, id, filters)
-  print_addon_info(type, common.grep(system_bottle:all_addons(), function(p) return (not type or p.type == type) and (not id or p.id:find(id)) end), filters)
-end
-
 function ppm.describe()
   local repo_urls = common.grep(common.map(repositories, function(e) return e:url() end), function(url) return #common.grep(DEFAULT_REPOS, function(r) return r:url() == url end) == 0  end)
   print("ppm run " .. common.join(" ", { system_bottle.pragtical.version, table.unpack(repo_urls) }) .. " " .. common.join(" ", common.map(system_bottle:installed_addons(), function(p) return p.id .. (p.version and (":" .. p.version) or "") end)))
 end
 
-function ppm.addon_upgrade()
+function ppm.addon_upgrade(excluded)
   local installing = {}
   local upgraded = {}
   for _,addon in ipairs(system_bottle:installed_addons()) do
-    if addon.installation_state and addon.installation_state.protected then
+    if stage and addon.id == "plugin_manager" then
+      log.warning("Skipping Plugin Manager itself during startup upgrades")
+    elseif addon.installation_state and addon.installation_state.protected then
       log.warning("Skipping protected " .. addon.id .. "; explicitly reinstall to replace local or modified files")
-    elseif not upgraded[addon.id] and not addon:is_core(system_bottle) and not addon:is_bundled(system_bottle) then
+    elseif not (excluded and excluded[addon.id]) and not upgraded[addon.id] and not addon:is_core(system_bottle) and not addon:is_bundled(system_bottle) then
       local candidates = common.grep({ system_bottle:get_addon(addon.id) }, function(candidate)
         return candidate.repository and
           candidate:is_installable(system_bottle) and
@@ -3316,6 +3446,488 @@ function ppm.setup()
   if not primary_pragtical then primary_pragtical = pragticals[1] end
 end
 
+-- A batch has one published manifest. Each target can use either payload slot.
+local function batch_path(token)
+  assert(type(token) == "string" and #token == 64 and token:match("^%x+$"), "invalid pending batch")
+  local root = USERDIR .. PATHSEP .. "ppm-updates"
+  local dir = root .. PATHSEP .. token
+  for _, path in ipairs { root, dir } do
+    local stat = system.stat(path)
+    assert(not stat or not stat.symlink, "linked staging directory: " .. path)
+  end
+  return dir
+end
+
+local function load_batch(dir)
+  local plan = json.decode(common.read(dir .. "/plan.json"))
+  assert(plan.schema == 2 or (plan.schema == 1 and (plan.slot == "a" or plan.slot == "b")), "invalid pending manifest")
+  assert(plan.config == installations.key(CONFIGDIR), "pending batch uses a different ppm configuration")
+  for rel, target in pairs(plan.targets) do
+    if plan.schema == 1 then target.slot = plan.slot end
+    assert(target.slot == "a" or target.slot == "b", "invalid pending payload slot")
+    assert(relative_addon(USERDIR .. PATHSEP .. rel) == rel, "invalid pending target")
+    local parent = system.stat(common.dirname(USERDIR .. "/" .. rel))
+    assert(not parent or not parent.symlink, "linked addon directory: " .. rel)
+  end
+  plan.schema, plan.slot = 2, nil
+  for name in pairs(plan.metadata) do
+    assert(name == "settings.json" or name == "installations.json", "invalid pending metadata")
+  end
+  return plan
+end
+
+-- The stage response and a fresh listing use the same pending row markers.
+local function pending_actions(plan)
+  if plan.selection then
+    local pending = {}
+    if plan.selection.all then pending["upgrade:*"] = "upgrade" end
+    for id in pairs(plan.selection.excluded) do pending["except:" .. id] = true end
+    for id, pick in pairs(plan.selection.addons) do
+      pending[pick.action == "install" and ("install:" .. pick.arg) or ("user:" .. id)] = pick.action
+    end
+    return pending
+  end
+  local ledger = plan.metadata["installations.json"]
+  local records = ledger and json.decode(ledger.after).installations or {}
+  local pending, reinstalls = {}, {}
+  for _, request in ipairs(plan.requests) do
+    if request.action == "reinstall" then
+      for _, arg in ipairs(request.args) do reinstalls[arg:match("^[^:]+")] = true end
+    end
+  end
+  for rel, target in pairs(plan.targets) do
+    local key = installations.key(USERDIR .. "/" .. rel)
+    local record = records[key]
+    if target.before then
+      pending[key] = not target.after and "uninstall" or (record and reinstalls[record.id] and "reinstall" or "upgrade")
+    elseif target.after and record then
+      local prefix = record.type .. ":" .. record.id .. ":" .. record.version .. ":"
+      pending[prefix .. "catalog:" .. record.repository] = "install"
+      if record.source_repository then pending[prefix .. "source:" .. record.source_repository] = "install" end
+    end
+  end
+  return pending
+end
+
+function ppm.addon_list(type, id, filters)
+  local pending
+  if filters.pending then
+    local dir = batch_path(filters.pending)
+    if system.stat(dir .. "/plan.json") and not system.stat(dir .. "/committed") then
+      pending = pending_actions(load_batch(dir))
+    end
+  end
+  print_addon_info(type, common.grep(system_bottle:all_addons(), function(p) return (not type or p.type == type) and (not id or p.id:find(id)) end), filters, pending)
+end
+
+local function check_batch(plan, mode)
+  if mode ~= "append" then
+    for rel, target in pairs(plan.targets) do
+      assert(digest(USERDIR .. "/" .. rel, 0, mode == "apply") == target.before, "addon changed since staging: " .. rel)
+    end
+  end
+  for name, changes in pairs(plan.metadata) do
+    local path = CONFIGDIR .. "/" .. name
+    assert((system.stat(path) and common.read(path) or false) == changes.before,
+      "ppm configuration changed since staging: " .. name)
+  end
+end
+
+local function validate_request(action, args)
+  assert(action == "upgrade" or action == "install" or action == "uninstall" or action == "reinstall",
+    "invalid stage action")
+  assert(action == "upgrade" and #args == 0 or action ~= "upgrade" and #args > 0, "invalid stage arguments")
+  for _, arg in ipairs(args) do
+    local id = arg:match("^([%w_%-]+)") or ""
+    assert((arg == id or arg:match("^[%w_%-]+:[%w_.%-]+$")) and id ~= "" and
+      id:lower() ~= "pragtical" and id:lower() ~= "plugin_manager", "cannot stage " .. arg)
+  end
+end
+
+-- Editing the desired result needs neither a catalog nor a live installation scan.
+function ppm.queue(token, action, ...)
+  local args, fresh = { ... }, token == "new"
+  if action == "undo" then assert(not fresh and #args == 1, "expected one queued addon") end
+  validate_request((action == "undo" or (action == "upgrade" and #args > 0)) and "install" or action, args)
+  if fresh then token = system.hash(tostring({}) .. tostring(system.time()) .. USERDIR) end
+  local dir = batch_path(token)
+  local plan
+  if fresh then
+    common.mkdirp(common.dirname(dir))
+    system.mkdir(dir)
+    plan = { schema = 2, config = installations.key(CONFIGDIR), selection = { addons = {}, excluded = {} } }
+  else
+    assert(not system.stat(dir .. "/applying") and not system.stat(dir .. "/committed"), "batch already claimed")
+    plan = load_batch(dir)
+    if not plan.selection and action == "undo" then return ppm.undo_pending(token, args[1]) end
+    assert(plan.selection, "Apply or cancel the previously staged batch before queuing new changes")
+    assert(plan.selection.all or next(plan.selection.addons), "batch is empty; refresh before queuing another change")
+  end
+  local selection = plan.selection
+  local before = not fresh and installations.signature(selection)
+  if action == "upgrade" and #args == 0 then
+    selection.all, selection.excluded = true, {}
+  else
+    for _, arg in ipairs(args) do
+      local id = arg:match("^[^:]+")
+      if action == "undo" then
+        assert(selection.addons[id] or selection.all, id .. " is not queued")
+        selection.addons[id] = nil
+        if selection.all then selection.excluded[id] = true end
+      else
+        selection.addons[id] = { action = action, arg = arg }
+      end
+    end
+  end
+  if fresh or before ~= installations.signature(selection) then
+    -- A changed selection supersedes any prepared plan from a locked restart.
+    plan.prepared, plan.targets, plan.metadata, plan.requests, plan.meta = false, {}, {}, {}, {}
+    installations.atomic_write(dir .. "/plan.json", json.encode(plan))
+  end
+  local empty = not selection.all and not next(selection.addons)
+  if JSON then print(json.encode({ token = token, empty = empty, pending = pending_actions(plan) }))
+  else print(token) end
+end
+
+-- Edit only the published plan. Unreferenced payloads are reclaimed with the
+-- slot; a crash before publication leaves the previous batch fully usable.
+function ppm.undo_pending(token, id, ...)
+  assert(type(id) == "string" and id:match("^[%w_%-]+$") and select("#", ...) == 0, "expected one addon id")
+  local dir = batch_path(token)
+  assert(not system.stat(dir .. "/applying") and not system.stat(dir .. "/committed"), "batch already claimed")
+  local plan = load_batch(dir)
+  assert(not plan.selection, "Use queue undo to edit a startup selection")
+  local ledger = plan.metadata["installations.json"]
+  local before = ledger and ledger.before and json.decode(ledger.before).installations or {}
+  local after = ledger and json.decode(ledger.after) or { installations = {} }
+  local config = plan.metadata["settings.json"]
+  local old_settings = config and config.before and json.decode(config.before)
+  local previous = old_settings and old_settings.installed or {}
+  local nodes, names = {}, {}
+  for rel, target in pairs(plan.targets) do
+    local key = installations.key(USERDIR .. "/" .. rel)
+    local old, new = before[key], after.installations[key]
+    local record = target.after and new or old
+    local name = target.id or (record and record.id)
+    assert(name and not nodes[name], "cannot safely edit ambiguous staged target " .. rel)
+    local metadata = record and record.metadata or {}
+    nodes[name] = { target = target, key = key, rel = rel, old = old, new = new, uninstall = not target.after,
+      deps = metadata.dependencies or target.dependencies or {}, needs = {}, orphans = {} }
+    for _, alias in ipairs(common.concat({ name }, metadata.provides or {}, metadata.replaces or {})) do
+      names[alias] = names[alias] or {}
+      names[alias][name] = true
+    end
+  end
+  assert(nodes[id], id .. " is not queued")
+  for name, meta in pairs(plan.meta or {}) do
+    nodes[name] = { deps = meta.dependencies, uninstall = meta.uninstall, needs = {}, orphans = {} }
+    names[name] = { [name] = true }
+  end
+  -- Installs need their missing dependencies. Removing a dependency requires
+  -- removing its consumers; orphan cleanup is conditional on all of them going.
+  for name, node in pairs(nodes) do
+    for dep, spec in pairs(node.deps) do
+      for child in pairs(names[dep] or {}) do
+        local other = nodes[child]
+        if node.uninstall and other.uninstall then
+          if not spec.optional then other.needs[name] = true end
+          node.orphans[child] = true
+        elseif not node.uninstall and not other.uninstall then
+          local old = other.target and other.target.before and other.old
+          if not old or not match_version(old.version, spec.version) or (old.id ~= dep
+            and not common.first(old.metadata.provides or {}, dep) and not common.first(old.metadata.replaces or {}, dep)) then
+            node.needs[child] = true
+          end
+        end
+      end
+    end
+  end
+  local function retained()
+    local keep = {}
+    local function visit(name)
+      if keep[name] then return end
+      keep[name] = true
+      for child in pairs(nodes[name].needs) do visit(child) end
+    end
+    for _, request in ipairs(plan.requests) do
+      if request.action == "upgrade" then
+        for name, node in pairs(nodes) do
+          local upgraded = request.upgrades and request.upgrades[name]
+            or (not request.upgrades and node.target and node.target.before and node.target.after)
+          if upgraded and not (request.excluded and request.excluded[name]) then visit(name) end
+        end
+      else
+        for _, arg in ipairs(request.args) do
+          local root = arg:match("^[^:]+")
+          assert(plan.meta or names[root], "older batch lacks dependencies for " .. root .. "; cancel and requeue to edit it")
+          for name in pairs(names[root] or {}) do visit(name) end
+        end
+      end
+    end
+    local changed
+    repeat
+      changed = false
+      for name, node in pairs(nodes) do
+        if keep[name] then
+          for child in pairs(node.orphans) do
+            if not keep[child] and not common.first(previous, child) then
+              local orphan = true
+              for user in pairs(nodes[child].needs) do if not keep[user] then orphan = false; break end end
+              if orphan then visit(child); changed = true end
+            end
+          end
+        end
+      end
+    until not changed
+    return keep
+  end
+  local original = retained()
+  assert(original[id], "cannot determine which request queued " .. id .. "; cancel the batch to remove it")
+  for i = #plan.requests, 1, -1 do
+    local request = plan.requests[i]
+    if request.action == "upgrade" then
+      request.excluded = request.excluded or {}
+      request.excluded[id] = true
+    else
+      request.args = common.grep(request.args, function(arg) return arg:match("^[^:]+") ~= id end)
+      if #request.args == 0 then table.remove(plan.requests, i) end
+    end
+  end
+  local keep, removed = retained(), {}
+  assert(not keep[id], "Cannot unqueue " .. id .. ": another queued change requires it. Undo the dependent change first.")
+  for name in pairs(original) do
+    local node = nodes[name]
+    if not keep[name] and node.target then
+      plan.targets[node.rel], removed[name] = nil, true
+      after.installations[node.key] = node.old
+    elseif not keep[name] and plan.meta then
+      plan.meta[name] = nil
+    end
+  end
+  -- Restoring an old version must not reintroduce a requirement that a
+  -- different, still-queued uninstall or upgrade would now break.
+  for name in pairs(removed) do
+    local old = nodes[name].old
+    for dep, spec in pairs(old and old.metadata.dependencies or {}) do
+      for provider in pairs(names[dep] or {}) do
+        local node = nodes[provider]
+        if not removed[provider] and not spec.optional and node.old and match_version(node.old.version, spec.version) then
+          assert(node.new and match_version(node.new.version, spec.version),
+            "Cannot unqueue " .. name .. ": the installed version requires " .. dep .. ". Undo its pending change first.")
+        end
+      end
+    end
+  end
+  if ledger then
+    if next(plan.targets) then ledger.after = json.encode(after) else plan.metadata["installations.json"] = nil end
+  end
+  if config then
+    local settings = json.decode(config.after)
+    settings.installed = common.grep(settings.installed, function(name) return not removed[name] end)
+    for _, name in ipairs(previous) do
+      if removed[name] then table.insert(settings.installed, name) end
+    end
+    if #settings.installed == #previous and #common.intersection(settings.installed, previous) == #previous then
+      settings.installed = previous
+    end
+    if old_settings and installations.signature(settings) == installations.signature(old_settings) then
+      plan.metadata["settings.json"] = nil
+    else config.after = json.encode(settings) end
+  end
+  installations.atomic_write(dir .. "/plan.json", json.encode(plan))
+  local empty = not next(plan.targets) and not next(plan.metadata)
+  if JSON then print(json.encode({ token = token, empty = empty, removed = common.canonical_order(removed) }))
+  else print(token) end
+end
+
+-- Resolve all requests against one overlay and publish only the complete result.
+local function prepare_batch(dir, plan, requests)
+  plan.meta = plan.meta or {}
+  stage = { dir = dir, targets = plan.targets, meta = plan.meta,
+    requested = {}, write_slots = {}, changed = {} }
+  -- Write replacements into the other slot, never over a published payload.
+  for rel, target in pairs(plan.targets) do stage.write_slots[rel] = target.slot == "a" and "b" or "a" end
+  local empty
+  local ok, err = pcall(function()
+    local config, ledger = plan.metadata["settings.json"], plan.metadata["installations.json"]
+    if config then settings = json.decode(config.after) end
+    if ledger then installations.records = json.decode(ledger.after).installations end
+    for _, request in ipairs(requests) do
+      local action, args = request.action, request.args
+      validate_request(action, args)
+      stage.request, stage.requested = request, {}
+      for _, arg in ipairs(args) do stage.requested[arg:match("^[^:]+")] = true end
+      plan.requests[#plan.requests + 1] = request
+      if action == "upgrade" then request.upgrades = {}; ppm.addon_upgrade(request.excluded)
+      elseif action == "install" then ppm.install(nil, table.unpack(args))
+      elseif action == "uninstall" then ppm.addon_uninstall(nil, table.unpack(args))
+      else ppm.addon_reinstall(nil, table.unpack(args)) end
+    end
+    for rel in pairs(stage.changed) do
+      local target = plan.targets[rel]
+      target.after = digest(dir .. "/" .. target.slot .. "/" .. rel)
+      local pick = plan.selection and plan.selection.addons[target.id]
+      assert(not (pick and pick.action == "uninstall" and target.after),
+        "Cannot uninstall " .. target.id .. ": another queued plugin requires it")
+    end
+    for name, value in pairs({
+      ["settings.json"] = stage.save_settings and settings,
+      ["installations.json"] = stage.save_records and { schema_version = 1, installations = installations.records }
+    }) do
+      local path = CONFIGDIR .. "/" .. name
+      local changes = plan.metadata[name] or { before = system.stat(path) and common.read(path) or false }
+      changes.after = json.encode(value)
+      plan.metadata[name] = changes
+    end
+    empty = not next(plan.targets) and not next(plan.metadata)
+    if plan.selection then plan.prepared = true end
+    installations.atomic_write(dir .. "/plan.json", json.encode(plan))
+  end)
+  if not ok then
+    for rel in pairs(stage.changed) do common.rmrf(dir .. "/" .. plan.targets[rel].slot .. "/" .. rel) end
+    stage = nil
+    error(err, 0)
+  end
+  stage = nil
+  return empty
+end
+
+function ppm.stage(token, action, ...)
+  local args, fresh = { ... }, token == "new"
+  validate_request(action, args)
+  if fresh then token = system.hash(tostring({}) .. tostring(system.time()) .. USERDIR) end
+  local dir = batch_path(token)
+  local plan
+  if fresh then
+    common.mkdirp(common.dirname(dir))
+    system.mkdir(dir)
+    plan = { schema = 2, config = installations.key(CONFIGDIR), targets = {}, metadata = {}, requests = {}, meta = {} }
+  else
+    assert(not system.stat(dir .. "/applying") and not system.stat(dir .. "/committed"), "batch already claimed")
+    plan = load_batch(dir)
+    assert(not plan.selection, "Use queue to edit a startup selection")
+    assert(next(plan.targets) or next(plan.metadata), "batch is empty; refresh before queuing another change")
+    check_batch(plan, "append")
+  end
+  local ok, empty = pcall(prepare_batch, dir, plan, { { action = action, args = args } })
+  if not ok then
+    if fresh then common.rmrf(dir) end
+    error(empty, 0)
+  end
+  if JSON then print(json.encode({ token = token, empty = empty, pending = pending_actions(plan) })) else print(token) end
+end
+
+local function move(from, to)
+  common.mkdirp(common.dirname(to))
+  assert(not system.stat(to), "pending destination occupied: " .. to)
+  if PLATFORM == "windows" then system.replace_file(from, to, false)
+  else assert(common.file_rename(from, to)) end
+end
+
+function ppm.apply_pending(token, discard, configure_network)
+  local dir = batch_path(token)
+  -- Delete the commit marker last, even if cleanup has to be retried.
+  local function retire()
+    for _, name in ipairs(system.ls(dir)) do
+      if name ~= "committed" then common.rmrf(dir .. "/" .. name) end
+    end
+    assert(common.file_remove(dir .. "/committed"))
+    system.rmdir(dir)
+  end
+  if system.stat(dir .. "/committed") then retire(); return end
+  local plan = load_batch(dir)
+  if not discard and plan.selection and not plan.prepared then
+    assert(not system.stat(dir .. "/applying"), "cannot prepare an interrupted apply")
+    -- Only the first attempt needs repositories. A lock retry uses the saved files.
+    local selection = plan.selection
+    local ok, err = pcall(function()
+      assert(not SYMLINK and not POST and not REINSTALL, "unsupported staging option")
+      local groups = { install = {}, uninstall = {}, reinstall = {} }
+      local excluded = common.merge({}, selection.excluded)
+      for _, id in ipairs(common.canonical_order(selection.addons)) do
+        local pick = selection.addons[id]
+        local action = pick.action == "upgrade" and "install" or pick.action
+        validate_request(action, { pick.arg })
+        assert(id == pick.arg:match("^[^:]+"), "invalid queued addon")
+        table.insert(groups[action], pick.arg)
+        excluded[id] = true
+      end
+      if not selection.all and #groups.install == 0 and #groups.reinstall == 0 then NO_NETWORK = true end
+      log.progress_action("Preparing queued plugin changes...")
+      configure_network()
+      ppm.setup()
+      if selection.all then ppm.update_addon_repositories() end
+      local requests = {}
+      for _, action in ipairs { "uninstall", "upgrade", "install", "reinstall" } do
+        if action == "upgrade" then
+          if selection.all then table.insert(requests, { action = action, args = {}, excluded = excluded }) end
+        elseif #groups[action] > 0 then
+          table.insert(requests, { action = action, args = groups[action] })
+        end
+      end
+      prepare_batch(dir, plan, requests)
+    end)
+    if not ok then error({ code = "prepare_failed", message = type(err) == "table" and err.message or tostring(err) }, 0) end
+  end
+  local paths = common.canonical_order(plan.targets)
+  local marker = dir .. "/applying"
+  -- A backup exists only if the original rename succeeded. The staged file
+  -- disappears only after its rename succeeds. Both survive process death.
+  local function rollback()
+    for name, changes in pairs(plan.metadata) do
+      local path = CONFIGDIR .. "/" .. name
+      local current = system.stat(path) and common.read(path) or false
+      if current ~= changes.before then
+        assert(current == changes.after, "metadata changed during recovery: " .. name)
+        if changes.before then installations.atomic_write(path, changes.before) else assert(common.file_remove(path)) end
+      end
+    end
+    for i = #paths, 1, -1 do
+      local rel = paths[i]
+      local target = plan.targets[rel]
+      local live, saved, new = USERDIR .. "/" .. rel, dir .. "/old/" .. rel, dir .. "/" .. target.slot .. "/" .. rel
+      if target.after and not system.stat(new) then
+        assert(digest(live) == target.after, "cannot recover changed target: " .. rel)
+        move(live, new)
+      end
+      if system.stat(saved) then move(saved, live) end
+    end
+    check_batch(plan)
+    assert(common.file_remove(marker))
+  end
+  if system.stat(marker) then
+    assert(not discard, "cannot discard an interrupted apply")
+    rollback()
+  end
+  if discard then common.rmrf(dir); return end
+  check_batch(plan, "apply")
+  for _, rel in ipairs(paths) do
+    local target = plan.targets[rel]
+    assert(digest(dir .. "/" .. target.slot .. "/" .. rel) == target.after, "damaged staged addon: " .. rel)
+  end
+  installations.atomic_write(marker, "applying")
+  local ok, err = pcall(function()
+    for i, rel in ipairs(paths) do
+      local target, live = plan.targets[rel], USERDIR .. "/" .. rel
+      if JSON and PROGRESS then
+        local fraction = math.floor(1000 * (i - 1) / #paths) / 1000
+        io.stdout:write(json.encode({ progress = { label = "Applying " .. rel, percent = fraction } }) .. "\n")
+        io.stdout:flush()
+      end
+      if target.before then
+        local backup = dir .. "/old/" .. rel
+        move(live, backup)
+        assert(digest(backup) == target.before, "addon changed during apply: " .. rel)
+      end
+      if target.after then move(dir .. "/" .. target.slot .. "/" .. rel, live) end
+    end
+    for name, changes in pairs(plan.metadata) do installations.atomic_write(CONFIGDIR .. "/" .. name, changes.after) end
+    assert(common.file_rename(marker, dir .. "/committed"))
+  end)
+  if not ok then rollback(); error(err, 0) end
+  retire()
+end
+
 function ppm.command(ARGS)
   if not ARGS[2]:find("%S") then return
   elseif ARGS[2] == "init" then return
@@ -3331,7 +3943,7 @@ function ppm.command(ARGS)
   elseif (ARGS[2] == "plugin" or ARGS[2] == "color" or ARGS[2] == "library" or ARGS[2] == "font") and ARGS[3] == "uninstall" then ppm.addon_uninstall(ARGS[2], table.unpack(common.slice(ARGS, 4)))
   elseif (ARGS[2] == "plugin" or ARGS[2] == "color" or ARGS[2] == "library" or ARGS[2] == "font") and ARGS[3] == "reinstall" then ppm.addon_reinstall(ARGS[2], table.unpack(common.slice(ARGS, 4)))
   elseif (ARGS[2] == "plugin" or ARGS[2] == "color" or ARGS[2] == "library" or ARGS[2] == "font") and (#ARGS == 2 or ARGS[3] == "list") then return ppm.addon_list(ARGS[2], ARGS[4], ARGS)
-  elseif ARGS[2] == "upgrade" then return ppm.addon_upgrade(table.unpack(common.slice(ARGS, 3)))
+  elseif ARGS[2] == "upgrade" then return ppm.addon_upgrade()
   elseif ARGS[2] == "install" then ppm.install(nil, table.unpack(common.slice(ARGS, 3)))
   elseif ARGS[2] == "unstub" then return ppm.unstub(nil, table.unpack(common.slice(ARGS, 3)))
   elseif ARGS[2] == "uninstall" then ppm.addon_uninstall(nil, table.unpack(common.slice(ARGS, 3)))
@@ -3376,14 +3988,16 @@ end
 
 local status = 0
 local function error_handler(err)
+  local code
+  if type(err) == "table" then code, err = err.code, err.message end
   local s, e
   if err then s, e = err:find("%:%d+") end
   local message = e and err:sub(e + 3) or err
   if JSON then
     if VERBOSE then
-      io.stderr:write(json.encode({ error = err, actions = actions, warnings = warnings, traceback = debug.traceback(nil, 2) }) .. "\n")
+      io.stderr:write(json.encode({ error = err, code = code, actions = actions, warnings = warnings, traceback = debug.traceback(nil, 2) }) .. "\n")
     else
-      io.stderr:write(json.encode({ error = message or err, actions = actions, warnings = warnings }) .. "\n")
+      io.stderr:write(json.encode({ error = message or err, code = code, actions = actions, warnings = warnings }) .. "\n")
     end
   else
     if err then io.stderr:write(colorize((not VERBOSE and message or err) .. "\n", "red")) end
@@ -3406,7 +4020,7 @@ xpcall(function()
     ["no-install-optional"] = "flag", datadir = "string", binary = "string", trace = "flag", progress = "flag",
     symlink = "flag", reinstall = "flag", ["no-color"] = "flag", config = "string", table = "string", header = "string",
     repository = "string", ephemeral = "flag", mask = "array", raw = "string", plugin = "array", ["no-network"] = "flag",
-    ["no-git"] = "flag", update = "flag",
+    ["no-git"] = "flag", update = "flag", pending = "string",
     -- filtration flags
     author = "array", tag = "array", stub = "array", dependency = "array", status = "array",
     type = "array", name = "array"
@@ -3472,6 +4086,14 @@ It has the following commands:
 
   ppm upgrade                              Upgrades all installed addons
                                            to new version if applicable.
+  ppm queue new|<token> install|reinstall|uninstall <addon> [...]  Save a selection without fetching anything.
+  ppm queue new|<token> upgrade [<addon> ...]   Queue selected upgrades, or check and upgrade all at startup.
+  ppm queue <token> undo <addon>           Remove a selection without resolving dependencies.
+  ppm stage new|<token> install|reinstall|uninstall <addon> [...]
+  ppm stage new|<token> upgrade            Prepare a startup batch without changing live addons.
+  ppm stage <token> undo <addon>           Withdraw a queued addon without changing live files.
+  ppm apply-pending <token>                Prepare if needed, then apply with rollback on failure.
+  ppm discard-pending <token>              Cancel a batch that is not being applied.
   ppm self-upgrade [version]               Upgrades ppm to a new version,
                                            if applicable. Defaults to
                                            latest.
@@ -3590,6 +4212,7 @@ in any circumstance unless explicitly supplied.
                            Official repositories must function without this
                            flag being needed; generally they must provide
                            binaries if there is a native compilation step.
+  --pending=token          Include per-addon pending_action in JSON listings for a staged batch.
   --remotes                Automatically adds any specified remotes in the
                            repository to the end of the resolution list.
   --ssl-certs=noverify     Ignores SSL certificate validation. Opens you up to
@@ -3696,25 +4319,30 @@ not commonly used publically.
   if (not JSON and not QUIET and (TTY or PROGRESS)) or (JSON and PROGRESS) then
     local start_time, last_read
     local function format_bytes(bytes)
-      if bytes < 1024 then return string.format("%6d  B", math.floor(bytes)) end
-      if bytes < 1*1024*1024 then return string.format("%6.1f kB", bytes / 1024) end
-      if bytes < 1*1024*1024*1024 then return string.format("%6.1f MB", bytes / (1024*1024))  end
-      return string.format("%6.2f GB", bytes / (1024*1024*1024))
+      if bytes < 1024 then return string.format("%d B", math.floor(bytes)) end
+      if bytes < 1024^2 then return string.format("%.1f KiB", bytes / 1024) end
+      if bytes < 1024^3 then return string.format("%.1f MiB", bytes / 1024^2) end
+      return string.format("%.2f GiB", bytes / 1024^3)
     end
     if JSON then
-      write_progress_bar = function(total_read, total_objects_or_content_length, indexed_objects, received_objects, local_objects, local_deltas, indexed_deltas)
-        if type(total_read) == "boolean" then
-          io.stdout:write(json.encode({ progress = { percent = 1, label = progress_bar_label } }) .. "\n")
-          io.stdout:flush()
+      write_progress_bar = function(bytes, total, _, received_objects)
+        local progress = { label = progress_bar_label }
+        if type(bytes) == "boolean" then
+          progress.percent = 1
           last_read = nil
-          return
+        else
+          local now = system.time()
+          if last_read and now - last_read < 0.1 then return end
+          last_read = now
+          progress.detail = format_bytes(bytes)
+          if total and total > 0 then
+            -- Short fractions remain numbers in core.json; Git totals count objects, not bytes.
+            progress.percent = math.min(1, math.floor(1000 * (received_objects or bytes) / total) / 1000)
+            if not received_objects then progress.detail = progress.detail .. " / " .. format_bytes(total) end
+          end
         end
-        if not last_read then last_read = system.time() end
-        if not last_read or system.time() - last_read > 0.05 then
-          io.stdout:write(json.encode({ progress = { percent = (received_objects and (received_objects/total_objects_or_content_length) or (total_read/total_objects_or_content_length) or 0), label = progress_bar_label } }) .. "\n")
-          io.stdout:flush()
-          last_read = system.time()
-        end
+        io.stdout:write(json.encode({ progress = progress }) .. "\n")
+        io.stdout:flush()
       end
     else
       write_progress_bar = function(total_read, total_objects_or_content_length, indexed_objects, received_objects, local_objects, local_deltas, indexed_deltas)
@@ -3744,9 +4372,18 @@ not commonly used publically.
 
 
   repositories = {}
+  if ARGS[2] == "queue" then
+    engage_locks(function() ppm.queue(table.unpack(ARGS, 3)) end, error_handler, lock_warning)
+    return
+  end
+  if ARGS[2] == "stage" and ARGS[4] == "undo" then
+    engage_locks(function() ppm.undo_pending(ARGS[3], table.unpack(ARGS, 5)) end, error_handler, lock_warning)
+    return
+  end
   if ARGS[2] == "purge" then return ppm.purge() end
-  local ssl_certs = ARGS["ssl-certs"] or os.getenv("PPM_CERTS") or os.getenv("SSL_CERT_DIR") or os.getenv("SSL_CERT_FILE")
-  if not NO_NETWORK then
+  local function configure_network()
+    if NO_NETWORK then return end
+    local ssl_certs = ARGS["ssl-certs"] or os.getenv("PPM_CERTS") or os.getenv("SSL_CERT_DIR") or os.getenv("SSL_CERT_FILE")
     if ssl_certs and ssl_certs ~= "system" and ssl_certs ~= "mozilla" then
       if ssl_certs == "noverify" then
         system.certs("noverify")
@@ -3853,6 +4490,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
       end
     end
   end
+
+  if ARGS[2] == "apply-pending" or ARGS[2] == "discard-pending" then
+    engage_locks(function() ppm.apply_pending(ARGS[3], ARGS[2] == "discard-pending", configure_network) end, error_handler, lock_warning)
+    return
+  end
+  configure_network()
 
   local ppm_plugins_path = HOME .. PATHSEP .. ".config" .. PATHSEP .. "ppm" .. PATHSEP .. "plugins"
   local ppm_plugins = {}
@@ -3962,6 +4605,14 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
   if not system.stat(CACHEDIR) then common.mkdirp(CACHEDIR) end
   if not system.stat(CONFIGDIR) then common.mkdirp(CONFIGDIR) end
 
+  if ARGS[2] == "stage" then
+    engage_locks(function()
+      assert(not SYMLINK and not POST and not REINSTALL, "unsupported staging option")
+      ppm.setup()
+      ppm.stage(table.unpack(ARGS, 3))
+    end, error_handler, lock_warning)
+    return
+  end
   if engage_locks(function()
     ppm.setup()
   end, error_handler, lock_warning) then return end

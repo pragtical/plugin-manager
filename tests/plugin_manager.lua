@@ -398,10 +398,10 @@ test.describe("plugin_manager widget view", function()
       addons = manager.addons, valid_addons = manager.valid_addons, refresh = manager.refresh,
       install_many = manager.install_many, upgrade_many = manager.upgrade_many,
       uninstall_many = manager.uninstall_many, check_for_updates = manager.check_for_updates,
-      reinstall = manager.reinstall,
+      reinstall = manager.reinstall, undo_pending = manager.undo_pending, pending = manager.pending,
       unstub = manager.unstub, open_doc = core.open_doc, root_open_doc = core.root_view.open_doc,
       show = core.nag_view.show, active_view = core.active_view,
-      clip_rect_stack = core.clip_rect_stack,
+      clip_rect_stack = core.clip_rect_stack, draw_text = renderer.draw_text, draw_rect = renderer.draw_rect,
       libraries = config.plugins.plugin_manager.show_libraries
     }
     context.addons = {
@@ -422,7 +422,7 @@ test.describe("plugin_manager widget view", function()
       context.refresh_calls = context.refresh_calls + 1
       return manager.promise.new():resolve()
     end
-    for _, method in ipairs({ "install_many", "upgrade_many", "uninstall_many", "check_for_updates", "reinstall" }) do
+    for _, method in ipairs({ "install_many", "upgrade_many", "uninstall_many", "check_for_updates", "reinstall", "undo_pending" }) do
       manager[method] = function(_, addons, options)
         context.operations[#context.operations + 1] = { method = method, addons = addons, options = options }
         context.operation = manager.promise.new()
@@ -441,10 +441,11 @@ test.describe("plugin_manager widget view", function()
     manager.addons, manager.valid_addons, manager.refresh = original.addons, original.valid_addons, original.refresh
     manager.install_many, manager.upgrade_many = original.install_many, original.upgrade_many
     manager.uninstall_many, manager.check_for_updates = original.uninstall_many, original.check_for_updates
-    manager.reinstall = original.reinstall
+    manager.reinstall, manager.undo_pending, manager.pending = original.reinstall, original.undo_pending, original.pending
     manager.unstub, core.open_doc, core.root_view.open_doc = original.unstub, original.open_doc, original.root_open_doc
     core.nag_view.show, core.active_view = original.show, original.active_view
     core.clip_rect_stack = original.clip_rect_stack
+    renderer.draw_text, renderer.draw_rect = original.draw_text, original.draw_rect
     config.plugins.plugin_manager.show_libraries = original.libraries
     context.view:destroy_childs()
     if context.files_root then test.ok(common.rm(context.files_root, true)) end
@@ -456,6 +457,39 @@ test.describe("plugin_manager widget view", function()
     end
     test.fail("missing option " .. data)
   end
+
+  test.test("pending checkmarks are editable without selecting the plugin again", function(context)
+    local view = context.view
+    manager.pending = { state = "ready" }
+    context.addons[1].pending_action = "install"
+    context.addons[6].pending_action = "upgrade"
+    context.addons[7].pending_action = "uninstall"
+    view:rebuild()
+    choose(view.status_box, "pending")
+    test.equal(#view:get_sorted_plugins(), 3)
+    test.equal(#view:get_checked_plugins(), 0)
+    local box
+    for _, plugin, row in view.list:each_item() do
+      if plugin.pending_action then
+        test.ok(row.checkbox.visible and row.checkbox.checked and row.checkbox.clickable)
+        if plugin == context.addons[6] then box = row.checkbox end
+      end
+    end
+    box:set_checked(false)
+    test.equal(context.operations[1].method, "undo_pending")
+    test.equal(context.operations[1].addons.id, "updating")
+    local refreshes = context.refresh_calls
+    context.operation:reject("another queued change requires it")
+    test.equal(context.refresh_calls, refreshes)
+    test.ok(box.checked)
+    test.contains(view.error_message, "requires it")
+    box:set_checked(false)
+    context.addons[6].pending_action = nil
+    context.operation:resolve()
+    test.equal(context.refresh_calls, refreshes)
+    test.equal(#view:get_sorted_plugins(), 2)
+    test.equal(#view:get_checked_plugins(), 0)
+  end)
 
   test.test("filters orphaned, modified, and unknown local installations", function(context)
     for _, status in ipairs({ "modified", "local" }) do
@@ -595,6 +629,32 @@ test.describe("plugin_manager widget view", function()
     context.operation:resolve()
     test.equal(view.loading, false)
     test.same(view.checked, {})
+  end)
+
+  test.test("shows byte counts and the appropriate bar during a direct download", function(context)
+    local view = context.view
+    view:set_size(420, 800)
+    view:apply_action("install", { context.addons[1] })
+    local label = "Downloading https://example.invalid/" .. string.rep("long-path/", 12) .. "file.zip"
+    local texts, fill
+    renderer.draw_text = function(_, text, x) texts[text] = x end
+    renderer.draw_rect = function(_, _, width, _, color) if color == style.accent then fill = width end end
+    for _, sample in ipairs {
+      { percent = 0, detail = "0 B / 8 MiB", status = "0%   0 B / 8 MiB", fill = 0 },
+      { percent = 0.25, detail = "2 MiB / 8 MiB", status = "25%   2 MiB / 8 MiB", fill = view.size.x / 4 },
+      { detail = "3 MiB", status = "3 MiB", fill = view.size.x / 5 },
+    } do
+      context.operations[1].options.progress({ label = label, percent = sample.percent, detail = sample.detail })
+      texts, fill = {}, nil
+      view:draw_progress_strip()
+      test.equal(fill, sample.fill)
+      test.equal(texts[sample.status] + style.font:get_width(sample.status),
+        view.position.x + view.size.x - style.padding.x)
+      local activity
+      for text in pairs(texts) do if text:match("^Downloading") then activity = text end end
+      test.ok(activity and activity ~= label)
+      test.ok(texts[activity] + style.font:get_width(activity) < texts[sample.status])
+    end
   end)
 
   test.test("selects only visible actionable rows and keeps one candidate per ID", function(context)
@@ -887,13 +947,30 @@ test.describe("plugin_manager widget view", function()
     end
   end)
 
-  test.test("clear buttons stay square and compact batch buttons keep stable widths", function(context)
+  test.test("clearing search from inside the textbox restores the list and keeps selections", function(context)
     local view = context.view
     view:set_size(1300, 800)
     view:update()
-    for _, button in ipairs({ view.clear_search, view.clear_selection }) do
-      test.equal(button.size.x, button.size.y)
-    end
+    local count = #view:get_sorted_plugins()
+    view:set_checked(context.addons[2], true)
+    view.search:set_text("first")
+    test.equal(#view:get_sorted_plugins(), 1)
+    local x, y, w, h = view.search:get_clear_button_bounds()
+    x, y = x + w / 2, y + h / 2
+    view:on_mouse_pressed("left", x, y, 1)
+    view:on_mouse_released("left", x, y)
+    test.equal(view.search:get_text(), "")
+    test.is_nil(view.search:get_clear_button_bounds())
+    test.is_nil(view:get_state().filter_text)
+    test.equal(#view:get_sorted_plugins(), count)
+    test.equal(view:get_checked_plugins()[1], context.addons[2])
+  end)
+
+  test.test("clear selection stays square and compact batch buttons keep stable widths", function(context)
+    local view = context.view
+    view:set_size(1300, 800)
+    view:update()
+    test.equal(view.clear_selection.size.x, view.clear_selection.size.y)
     for action, button in pairs(view.batch_buttons) do
       local width = button.size.x
       local name = action:sub(1, 1):upper() .. action:sub(2)

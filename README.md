@@ -63,6 +63,31 @@ ppm --help
 Use `pragtical pm` in place of `ppm` to invoke the editor's bundled binary.
 For automated installation, pass `--assume-yes` and `--userdir=<directory>`.
 
+On Linux and macOS, downloads run directly in Plugin Manager. Its status
+strip shows bytes received, plus the total and percentage when the server
+provides a file size. With no reported size, the bar animates instead.
+
+On Windows to prevent file lock issues, the UI saves your selection and shows
+**Pending restart**. Checking or unchecking a pending action does not fetch
+repositories, resolve dependencies, or download files. Filter by
+**Pending restart** to see your selections, or use **Cancel Pending Changes**
+to clear them.
+
+On the next full launch, ppm resolves dependencies, downloads what it needs,
+and prepares the whole batch before replacing live plugins. A soft restart
+does not apply changes. **Upgrade All** checks repositories at startup;
+**Check for Updates** still checks immediately. If preparation fails, the
+selection remains editable and live plugins are unchanged.
+The startup window shows bytes received during downloads. When the server
+provides a file size, it also shows the total and percentage; otherwise
+the bar stays animated until the transfer finishes.
+If Windows reports that another process is using a
+file, the startup window names it and keeps the update queued when safe.
+Close the program holding the file (often another editor or language server),
+quit all Pragtical instances, and reopen the editor to retry automatically.
+On older editors without startup transactions, close Pragtical
+and run standalone ppm instead. Plugin Manager itself is not upgraded this way.
+
 ### Installed Addons
 
 **Check for Updates** refreshes repository metadata without installing anything.

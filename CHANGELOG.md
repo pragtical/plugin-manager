@@ -1,3 +1,17 @@
+# 2.0.0
+
+* On Windows, Plugin Manager queues installs, upgrades, and removals for the
+  next full editor launch. Use the Pending restart filter to review or undo
+  selections without refreshing repositories or downloading files.
+* ppm prepares the whole batch before changing live plugins. If another
+  process holds a file open and rollback succeeds, close that process and
+  relaunch Pragtical to retry the queued update.
+* Downloads show bytes received and, when the size is known, the total and
+  percentage. Progress is visible in the plugin view and at startup.
+* Added support for long Windows paths and recognized bundled Lua files
+  whose only difference from the repository copy is their line endings.
+* The UI now requires Pragtical mod-version 3.16.0.
+
 # 1.8.0
 
 * Preserved installed addon versions, sources, and payload hashes outside the

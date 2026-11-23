@@ -1,7 +1,7 @@
 project('ppm',
     ['c'],
     license : 'PPM',
-    version : '1.2.0',
+    version : '2.0.0',
     meson_version : '>= 0.56',
 )
 
@@ -32,6 +32,10 @@ microtar_dep = declare_dependency(
 ppm_source = files('src/ppm.c')
 cflags = []
 link_args = []
+win_deps = []
+if host_machine.system() == 'windows'
+    win_deps += cc.find_library('pathcch')
+endif
 ppm_release_version = get_option('release_version')
 ppm_full_version = get_option('full_version')
 ppm_target_arch = get_option('target_arch')
@@ -92,7 +96,8 @@ ppm_exe = executable(ppm_binary_name,
         libgit2_dep,
         libzip_dep,
         lua_dep,
-        microtar_dep
+        microtar_dep,
+        win_deps
     ],
     c_args: cflags,
     link_args: link_args,

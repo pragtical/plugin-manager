@@ -59,7 +59,7 @@ local function inside_userdir(path)
 end
 
 local function eligible(plugin, action)
-  if not plugin then return false end
+  if not plugin or plugin.pending_action then return false end
   if action == "install" then return plugin.status == "available" and not plugin.protected end
   if action == "upgrade" then return plugin.status == "upgradable" and not plugin.protected end
   if action == "reinstall" then return plugin.status ~= "special" and plugin.protected and
@@ -74,6 +74,10 @@ end
 
 local function selectable(plugin)
   return eligible(plugin, "install") or eligible(plugin, "upgrade") or eligible(plugin, "uninstall")
+end
+
+local function display_status(plugin)
+  return plugin.pending_action and ("Pending " .. plugin.pending_action) or plugin.status
 end
 
 local function fitting_length(font, text, width, suffix)
@@ -210,12 +214,12 @@ function PluginSummary:draw()
   local x, y, gap = self.position.x, self.position.y, style.padding.x
   local version = tostring(plugin.status == "core" and VERSION or plugin.version_display or plugin.version or "")
   local version_width = math.min(font:get_width(version), self.size.x * 0.4)
-  local color = status_color(plugin.status)
+  local color = plugin.pending_action and style.modified or status_color(plugin.status)
   renderer.draw_text(font, fit_text(font, display_name(plugin), self.size.x - version_width - gap),
     x, y, plugin.status == "upgradable" and color or style.text)
   local right = fit_text(font, version, version_width)
   renderer.draw_text(font, right, x + self.size.x - font:get_width(right), y, color)
-  local status = tostring(plugin.status or "")
+  local status = display_status(plugin) or ""
   local status_width = math.min(font:get_width(status), self.size.x * 0.4)
   local tags = table.concat(plugin.tags or {}, ", ")
   local metadata = (plugin.type or "plugin") .. (tags ~= "" and ("   " .. tags) or "")
@@ -254,6 +258,7 @@ function DetailsBody:update_lines()
   add(plugin.description or "No description available.")
   add("")
   add("Type: " .. (plugin.type or "plugin") .. "    Status: " .. (plugin.status or "unknown"), status_color(plugin.status))
+  if plugin.pending_action then add(display_status(plugin), style.modified) end
   add("Version: " .. tostring(plugin.status == "core" and VERSION or plugin.version_display or plugin.version or "unknown"))
   if plugin.available_version then add("Available: " .. plugin.available_version) end
   add("Author: " .. (plugin.author or "unknown"), style.dim)
@@ -338,13 +343,11 @@ function PluginView:build_controls()
   local this = self
   self.filter_bar = Widget(self)
   self.filter_bar.border.width = 0
-  self.search = TextBox(self.filter_bar, self.filter_text or "", "Search plugins...")
+  self.search = TextBox(self.filter_bar, self.filter_text or "", "Search plugins...", { clearable = true })
   self.search:set_tooltip("Search by name, ID, or tag")
   function self.search:on_change(text)
     if not this.updating_controls then this:set_filter(text) end
   end
-  self.clear_search = ActionButton(self.filter_bar, "", "X", function() this:set_filter("") end)
-  self.clear_search:set_tooltip("Clear search")
   self.category_box = CatalogSelectBox(self.filter_bar, "Category")
   self.category_box:set_tooltip("Category")
   function self.category_box:on_change()
@@ -356,7 +359,7 @@ function PluginView:build_controls()
   self.status_box:set_tooltip("Status")
   for _, option in ipairs({ { "All statuses", "all" }, { "Available", "available" },
     { "Installed", "installed" }, { "Updates", "upgradable" }, { "Orphaned", "orphan" },
-    { "Modified", "modified" }, { "Local", "local" } }) do
+    { "Modified", "modified" }, { "Local", "local" }, { "Pending restart", "pending" } }) do
     self.status_box:add_option(option[1], option[2])
   end
   function self.status_box:on_change()
@@ -382,7 +385,7 @@ function PluginView:build_controls()
   this.status_filter = self.status_box:get_selected_data() or "all"
   select_option(self.sort_box, self.sort.column .. (self.sort.asc and ":asc" or ":desc"))
   self.updating_controls = false
-  self.filter_controls = { self.search, self.clear_search, self.category_box, self.status_box, self.sort_box }
+  self.filter_controls = { self.search, self.category_box, self.status_box, self.sort_box }
 
   self.action_bar = Widget(self)
   self.action_bar.border.width = 0
@@ -490,8 +493,11 @@ function PluginView:matches(plugin)
     local text = string.ulower(display_name(plugin) .. " " .. plugin.id .. " " .. tags)
     if not text:ufind(query, 1, true) then return false end
   end
-  if self.status_filter == "installed" and (plugin.status == "available" or plugin.status == "incompatible") then return false end
-  if self.status_filter ~= "all" and self.status_filter ~= "installed" and plugin.status ~= self.status_filter then return false end
+  if self.status_filter == "pending" then
+    if not plugin.pending_action then return false end
+  elseif self.status_filter == "installed" then
+    if plugin.status == "available" or plugin.status == "incompatible" then return false end
+  elseif self.status_filter ~= "all" and plugin.status ~= self.status_filter then return false end
   if self.category:sub(1, 5) == "type:" and plugin.type ~= self.category:sub(6) then return false end
   if self.category == "language" then
     if not plugin.id:match("^language_") and not index_of(plugin.tags or {}, "language") then return false end
@@ -528,7 +534,8 @@ end
 function PluginView:build_row(row, plugin)
   local this = self
   local checkbox = CheckBox(row, "")
-  checkbox.visible, checkbox.clickable = selectable(plugin), selectable(plugin)
+  checkbox.visible = plugin.pending_action ~= nil or selectable(plugin)
+  if plugin.pending_action then checkbox:set_tooltip("Uncheck to undo: " .. display_status(plugin)) end
   row.checkbox = checkbox
   row.on_mouse_released = release_mouse
   function checkbox:on_change(checked)
@@ -543,7 +550,7 @@ function PluginView:build_row(row, plugin)
     if button == "left" or button == "right" then this:focus_plugin(plugin) end
     if button == "left" and clicks == 2 and checkbox.visible and checkbox.clickable
       and not checkbox:mouse_on_top(x, y) then
-      this:set_checked(plugin, this.checked[plugin.id] ~= row_key(plugin))
+      this:set_checked(plugin, not checkbox.checked)
     end
     return pressed(self, button, x, y, clicks)
   end
@@ -578,6 +585,7 @@ function PluginView:build_row(row, plugin)
 end
 
 function PluginView:rebuild()
+  self.listed_addons = self.plugin_manager.addons
   local focused = self.selected_plugin
   local focused_key = focused and row_key(focused)
   local state = self.pending_state
@@ -590,6 +598,7 @@ function PluginView:rebuild()
   local field = sort_fields[self.sort.column]
   local function sort_value(plugin)
     if field == "name" then return display_name(plugin) end
+    if field == "status" then return display_status(plugin) or "" end
     if field == "tags" then return table.concat(plugin.tags or {}, ", ") end
     return tostring(plugin[field] or "")
   end
@@ -643,7 +652,13 @@ function PluginView:focus_plugin(plugin)
 end
 
 function PluginView:set_checked(plugin, checked)
-  if self.loading or self.confirming or not selectable(plugin) then return end
+  if self.loading or self.confirming then return end
+  if plugin.pending_action then
+    local pending = self.plugin_manager.pending
+    if not checked and pending and pending.state == "ready" then self:operate("undo_pending", plugin) end
+    return
+  end
+  if not selectable(plugin) then return end
   self.checked[plugin.id] = checked and row_key(plugin) or nil
   self:update_controls()
 end
@@ -695,14 +710,19 @@ function PluginView:update_controls()
   self.select_visible.mixed = selected_visible > 0 and selected_visible < visible
   self.select_visible.clickable = visible > 0 and not self.loading and not self.confirming
   self.clear_selection.enabled = selected_total > 0 and not self.loading and not self.confirming
-  self.selection_label:set_label(string.format("%d of %d shown | %d selected%s",
-    #self.sorted_plugins, #self.catalog, selected_total, hidden > 0 and (" (" .. hidden .. " hidden)") or ""))
+  local pending = self.plugin_manager.pending
+  local status = pending and ({ ready = "Pending restart", failed = "Pending update failed",
+    in_progress = "Update in progress or interrupted" })[pending.state]
+  self.selection_label:set_label(string.format("%d of %d shown | %d selected%s%s",
+    #self.sorted_plugins, #self.catalog, selected_total, hidden > 0 and (" (" .. hidden .. " hidden)") or "",
+    status and " | " .. status or ""))
   self.selection_label:set_tooltip(self.selection_label.label)
   for _, plugin in ipairs(self.catalog) do
     local row = self.rows[row_key(plugin)]
     if row then
-      row.checkbox:set_checked(self.checked[plugin.id] == row_key(plugin))
-      row.checkbox.clickable = selectable(plugin) and not self.loading and not self.confirming
+      row.checkbox:set_checked(plugin.pending_action ~= nil or self.checked[plugin.id] == row_key(plugin))
+      row.checkbox.clickable = not self.loading and not self.confirming and
+        (selectable(plugin) or (plugin.pending_action ~= nil and pending and pending.state == "ready"))
     end
   end
   for action, button in pairs(self.batch_buttons) do
@@ -756,7 +776,7 @@ function PluginView:layout()
   local px, py, gap = style.padding.x, style.padding.y, style.padding.x / 2
   local width = math.max(0, self.size.x - px * 2)
   local control_height = style.font:get_height() + py * 2
-  local fixed = self.clear_search:get_width() + 540 * SCALE + gap * 4
+  local fixed = 540 * SCALE + gap * 3
   local search_width = math.max(math.min(width, 220 * SCALE), width - fixed)
   self.filter_bar:set_position(px, py)
   self.filter_bar:set_size(width, self.size.y)
@@ -811,8 +831,9 @@ function PluginView:layout()
 end
 
 function PluginView:update()
+  if not self.loading and not self.confirming and self.listed_addons ~= self.plugin_manager.addons then self:rebuild() end
   self:layout()
-  if self.loading and (not self.progress or not self.progress.percent or self.progress.percent == 0) then
+  if self.loading and not (self.progress and self.progress.percent) then
     local now = system.get_time()
     local frame = math.floor(now * 30)
     if frame ~= self.progress_frame then
@@ -852,23 +873,36 @@ function PluginView:on_mouse_released(...)
 end
 
 function PluginView:draw_progress_strip()
-  local height = style.font:get_height() + style.padding.y
+  local font, pad = style.font, style.padding.x
+  local height = font:get_height() + style.padding.y
   local y = self.position.y + self.size.y - height
   renderer.draw_rect(self.position.x, y, self.size.x, height, style.background2)
   local progress = self.progress or {}
   local percent = tonumber(progress.percent)
   if self.loading then
-    if percent and percent > 0 then
-      renderer.draw_rect(self.position.x, y, self.size.x * common.clamp(percent, 0, 1), math.max(2, SCALE), style.accent)
+    if percent then
+      percent = common.clamp(percent, 0, 1)
+      renderer.draw_rect(self.position.x, y, self.size.x * percent, math.max(2, SCALE), style.accent)
     else
       local width = self.size.x / 5
       local x = self.position.x + (self.size.x - width) * ((math.sin(system.get_time() * 3) + 1) / 2)
       renderer.draw_rect(x, y, width, math.max(2, SCALE), style.accent)
     end
   end
-  renderer.draw_text(style.font, fit_text(style.font, self.error_message or progress.label or "Working...",
-    self.size.x - style.padding.x * 2), self.position.x + style.padding.x,
-    y + style.padding.y / 2, self.error_message and style.warn or style.text)
+  local x, width = self.position.x + pad, self.size.x - 2 * pad
+  y = y + style.padding.y / 2
+  if self.loading and not self.error_message and (percent or progress.detail) then
+    local detail = progress.detail or ""
+    if percent then
+      detail = string.format("%d%%", math.floor(percent * 100)) .. (detail ~= "" and ("   " .. detail) or "")
+    end
+    detail = fit_text(font, detail, width)
+    width = width - font:get_width(detail)
+    renderer.draw_text(font, detail, x + width, y, style.text)
+    width = width - pad
+  end
+  renderer.draw_text(font, fit_text(font, self.error_message or progress.label or "Working...", width),
+    x, y, self.error_message and style.warn or style.text)
 end
 
 function PluginView:draw()
@@ -936,7 +970,7 @@ function PluginView:operate(method, plugins)
     self.loading, self.progress = false, nil
     self.error_message = tostring(err or "Plugin operation failed")
     self:update_controls()
-    self:refresh(false, nil, true)
+    if method ~= "undo_pending" and (PLATFORM ~= "Windows" or method == "check_for_updates") then self:refresh(false, nil, true) end
   end)
 end
 
@@ -1098,7 +1132,7 @@ command.add(list_view, {
       return
     end
     local plugin = view.selected_plugin
-    if plugin then view:set_checked(plugin, view.checked[plugin.id] ~= row_key(plugin)) end
+    if plugin then view:set_checked(plugin, not plugin.pending_action and view.checked[plugin.id] ~= row_key(plugin)) end
   end,
   ["plugin-manager:activate-control"] = function(view)
     local control = view.child_active
@@ -1168,6 +1202,8 @@ PluginView.menu:register(active_view, {
   { text = "Refresh Listing", command = "plugin-manager:refresh-all" },
   { text = "Check for Updates", command = "plugin-manager:check-for-updates" },
   { text = "Upgrade All", command = "plugin-manager:upgrade-all" },
+  { text = "Quit to Apply on Next Launch", command = "plugin-manager:quit-to-apply" },
+  { text = "Cancel Pending Changes", command = "plugin-manager:cancel-pending" },
 })
 
 return PluginView
